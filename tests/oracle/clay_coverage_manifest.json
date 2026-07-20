@@ -1,0 +1,367 @@
+{
+  "schema": "zlay-clay-source-coverage-v2",
+  "header": {
+    "path": "tests/oracle/clay.h",
+    "sha256": "54aef6d5f96b14e296bebb6db4a755543e98fd7e6c188411afb2f22a4b4f7728",
+    "byte_count": 303701,
+    "line_count": 5058
+  },
+  "line_inventory": {
+    "executable_count": 3329,
+    "sha256": "11e4a7016afbc78a8afadcb87dd7aeca705defb5d84582f94b6c730f89f1c4e3"
+  },
+  "function_inventory": {
+    "count": 107,
+    "sha256": "39b007a3bf151a8d6d23dc69b68a993a3b853355c865b2fbfbaa0a7c27c83c8d"
+  },
+  "branch_inventory": {
+    "count": 1232,
+    "sha256": "2477527f090b59943abe319d8d9793ba958be84f89429f042cbd81b149b46033"
+  },
+  "profile": {
+    "name": "host-clang-c99-scalar",
+    "target": "host",
+    "architecture": "host",
+    "scope": "scalar-and-common",
+    "language_standard": "c99",
+    "compiler": "clang",
+    "fixture_glob": "tests/oracle/*_fixture.c",
+    "compiler_args": [
+      "-std=c99",
+      "-I",
+      "tests/oracle",
+      "-DCLAY_DISABLE_SIMD=",
+      "-fprofile-instr-generate",
+      "-fcoverage-mapping"
+    ],
+    "fixtures": [
+      "tests/oracle/api_diagnostics_fixture.c",
+      "tests/oracle/capacity_match_fixture.c",
+      "tests/oracle/complex_fixture.c",
+      "tests/oracle/debug_fixture.c",
+      "tests/oracle/declaration_layout_fixture.c",
+      "tests/oracle/duplicate_lookup_fixture.c",
+      "tests/oracle/ease_out_fixture.c",
+      "tests/oracle/element_capacity_fixture.c",
+      "tests/oracle/external_scroll_fixture.c",
+      "tests/oracle/floating_pointer_edge_fixture.c",
+      "tests/oracle/hash_default_fixture.c",
+      "tests/oracle/id_collision_fixture.c",
+      "tests/oracle/id_error_fixture.c",
+      "tests/oracle/invalid_render_access_fixture.c",
+      "tests/oracle/layout_fixture.c",
+      "tests/oracle/layout_scroll_breadth_fixture.c",
+      "tests/oracle/no_open_api_fixture.c",
+      "tests/oracle/parity_regression_fixture.c",
+      "tests/oracle/pointer_fixture.c",
+      "tests/oracle/public_metadata_fixture.c",
+      "tests/oracle/public_values_fixture.c",
+      "tests/oracle/render_fixture.c",
+      "tests/oracle/render_scope_capacity_fixture.c",
+      "tests/oracle/retained_context_fixture.c",
+      "tests/oracle/safety_divergence_fixture.c",
+      "tests/oracle/scroll_fixture.c",
+      "tests/oracle/scroll_parity_fixture.c",
+      "tests/oracle/sizing_text_fixture.c",
+      "tests/oracle/source_coverage_fixture.c",
+      "tests/oracle/string_text_edge_fixture.c",
+      "tests/oracle/text_cache_lifecycle_fixture.c",
+      "tests/oracle/text_cache_runtime_setter_fixture.c",
+      "tests/oracle/text_capacity_fixture.c",
+      "tests/oracle/transition_fixture.c",
+      "tests/oracle/transition_lifecycle_fixture.c",
+      "tests/oracle/transition_matrix_fixture.c"
+    ]
+  },
+  "simd_supplement": {
+    "profile": {
+      "name": "host-clang-c99-x86_64-simd-supplement",
+      "target": "host",
+      "architecture": "x86_64",
+      "scope": "active-x86_64-simd-bodies",
+      "language_standard": "c99",
+      "compiler": "clang",
+      "compiler_args": [
+        "-std=c99",
+        "-I",
+        "tests/oracle",
+        "-fprofile-instr-generate",
+        "-fcoverage-mapping"
+      ],
+      "fixtures": [
+        "tests/oracle/hash_default_fixture.c"
+      ]
+    },
+    "source_ranges": [
+      {
+        "start_line": 1475,
+        "end_line": 1526
+      },
+      {
+        "start_line": 1978,
+        "end_line": 2002
+      }
+    ],
+    "line_inventory": {
+      "executable_count": 62,
+      "sha256": "b8c18f140bd87af9d0b6fb5f89a3677d4afa5867828418f986d86b3220249eb8"
+    },
+    "function_inventory": {
+      "count": 4,
+      "sha256": "45cf1a93c3411b5cdddc563db6ac87ae0db3cae0c7f2c06b664e7ad7505a9a85"
+    },
+    "branch_inventory": {
+      "count": 7,
+      "sha256": "8dbc8f684ef1d9272d29d011fb1e9c1481dd164f1e1ed5c15d5d3b077e10fd2e"
+    }
+  },
+  "excluded_lines": [
+    {
+      "line": 2301,
+      "reason": "LLVM maps the closing brace after the executed floating-width GROW arm as an uncovered physical line"
+    },
+    {
+      "line": 2305,
+      "reason": "LLVM maps the closing brace after the executed floating-width PERCENT arm as an uncovered physical line"
+    },
+    {
+      "line": 2312,
+      "reason": "LLVM maps the closing brace after the executed floating-height GROW arm as an uncovered physical line"
+    },
+    {
+      "line": 2316,
+      "reason": "LLVM maps the closing brace after the executed floating-height PERCENT arm as an uncovered physical line"
+    },
+    {
+      "line": 4257,
+      "reason": "The body is unreachable because Clay__GetHashMapItem returns a nonnull default sentinel for a missing item"
+    },
+    {
+      "line": 4258,
+      "reason": "The body is unreachable because Clay__GetHashMapItem returns a nonnull default sentinel for a missing item"
+    },
+    {
+      "line": 4259,
+      "reason": "The body is unreachable because Clay__GetHashMapItem returns a nonnull default sentinel for a missing item"
+    }
+  ],
+  "excluded_functions": [],
+  "excluded_branches": [
+    {
+      "start_line": 58,
+      "start_column": 41,
+      "end_line": 58,
+      "end_column": 42,
+      "file_id": 4,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "At line 4285 this comparison is emitted only while the outer MIN selected a negative A; A = max(position, -max(D, 0)) below zero requires D above zero, so the max(D, 0) comparison cannot be false"
+    },
+    {
+      "start_line": 58,
+      "start_column": 41,
+      "end_line": 58,
+      "end_column": 42,
+      "file_id": 4,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 1,
+      "direction": "false",
+      "reason": "At line 4285 this false-arm selection is emitted only while the outer MIN selected a negative A; that requires positive horizontal overflow D, so max(D, 0) cannot select zero"
+    },
+    {
+      "start_line": 58,
+      "start_column": 41,
+      "end_line": 58,
+      "end_column": 42,
+      "file_id": 5,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "At line 4292 this comparison is emitted only while the outer MIN selected a negative A; A = max(position, -max(D, 0)) below zero requires D above zero, so the max(D, 0) comparison cannot be false"
+    },
+    {
+      "start_line": 58,
+      "start_column": 41,
+      "end_line": 58,
+      "end_column": 42,
+      "file_id": 5,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 1,
+      "direction": "false",
+      "reason": "At line 4292 this false-arm selection is emitted only while the outer MIN selected a negative A; that requires positive vertical overflow D, so max(D, 0) cannot select zero"
+    },
+    {
+      "start_line": 162,
+      "start_column": 52,
+      "end_line": 162,
+      "end_column": 56,
+      "file_id": 8,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "At the line 3319 CLAY_TEXT expansion, currentElementData cannot be null because Clay__GetHashMapItem returns a nonnull default sentinel"
+    },
+    {
+      "start_line": 2127,
+      "start_column": 13,
+      "end_line": 2127,
+      "end_column": 31,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "Clay_LayoutElementArray_Get returns either the indexed element or its nonnull default sentinel, so hierarchicalParent cannot be null"
+    },
+    {
+      "start_line": 2295,
+      "start_column": 17,
+      "end_line": 2295,
+      "end_column": 27,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "Clay__GetHashMapItem returns either an item or its nonnull default sentinel, so parentItem cannot be null"
+    },
+    {
+      "start_line": 2727,
+      "start_column": 77,
+      "end_line": 2727,
+      "end_column": 94,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "Clay__GetHashMapItem returns either an item or its nonnull default sentinel, so parentHashMapItem cannot be null"
+    },
+    {
+      "start_line": 2783,
+      "start_column": 17,
+      "end_line": 2783,
+      "end_column": 32,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "Clay__GetHashMapItem returns either an item or its nonnull default sentinel, so clipHashMapItem cannot be null"
+    },
+    {
+      "start_line": 3188,
+      "start_column": 17,
+      "end_line": 3188,
+      "end_column": 32,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "Clay__GetHashMapItem returns either an item or its nonnull default sentinel, so clipHashMapItem cannot be null"
+    },
+    {
+      "start_line": 3327,
+      "start_column": 21,
+      "end_line": 3327,
+      "end_column": 39,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "Clay__GetHashMapItem returns either an item or its nonnull default sentinel, so currentElementData cannot be null"
+    },
+    {
+      "start_line": 3416,
+      "start_column": 53,
+      "end_line": 3416,
+      "end_column": 71,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "Clay__GetHashMapItem returns either an item or its nonnull default sentinel, so currentElementData cannot be null"
+    },
+    {
+      "start_line": 4111,
+      "start_column": 17,
+      "end_line": 4111,
+      "end_column": 24,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "Clay__GetHashMapItem returns either an item or its nonnull default sentinel, so mapItem cannot be null"
+    },
+    {
+      "start_line": 4139,
+      "start_column": 25,
+      "end_line": 4139,
+      "end_column": 34,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "The preceding skipTree guard continues the traversal, so skipTree is necessarily false at this dominated inner check"
+    },
+    {
+      "start_line": 4256,
+      "start_column": 13,
+      "end_line": 4256,
+      "end_column": 25,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "true",
+      "reason": "Clay__GetHashMapItem returns the nonnull default sentinel on misses, so the negated hashMapItem condition cannot be true"
+    },
+    {
+      "start_line": 4302,
+      "start_column": 45,
+      "end_line": 4302,
+      "end_column": 70,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "highestPriorityElementIndex and highestPriorityScrollData are assigned together in the same match block, so a selected index implies a nonnull pointer"
+    },
+    {
+      "start_line": 4487,
+      "start_column": 95,
+      "end_line": 4487,
+      "end_column": 113,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "true",
+      "reason": "Clay__GetHashMapItem returns the nonnull default sentinel on misses, so the negated parentHashMapItem condition cannot be true"
+    },
+    {
+      "start_line": 4520,
+      "start_column": 29,
+      "end_line": 4520,
+      "end_column": 74,
+      "file_id": 0,
+      "expanded_file_id": 0,
+      "kind": 4,
+      "occurrence": 0,
+      "direction": "false",
+      "reason": "The stale root is the initial queue entry and children enter this queue only under the same less-than-or-equal generation guard"
+    }
+  ]
+}

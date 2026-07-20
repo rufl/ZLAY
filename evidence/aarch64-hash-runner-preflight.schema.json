@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zlay.invalid/schema/aarch64-hash-runner-preflight-v1.json",
+  "title": "ZLAY AArch64 runner-record preflight v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "runner_provenance",
+    "runner_provenance_sha256",
+    "runner_record",
+    "preflight_sha256"
+  ],
+  "properties": {
+    "schema": { "const": "zlay.aarch64-runner-preflight.v1" },
+    "runner_provenance": { "$ref": "#/$defs/provenance" },
+    "runner_provenance_sha256": { "$ref": "#/$defs/sha256" },
+    "runner_record": { "$ref": "#/$defs/runner_record" },
+    "preflight_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "absolute_uri": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]*$"
+    },
+    "runner_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256", "byte_count"],
+      "properties": {
+        "uri": { "$ref": "#/$defs/absolute_uri" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "runner_id",
+        "hardware_model",
+        "recorded_by",
+        "operator_claim",
+        "attachment"
+      ],
+      "properties": {
+        "schema": { "const": "zlay.aarch64-runner-provenance.v1" },
+        "runner_id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "hardware_model": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "recorded_by": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "operator_claim": { "const": "physical-non-emulated" },
+        "attachment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uri", "sha256"],
+          "properties": {
+            "uri": { "$ref": "#/$defs/absolute_uri" },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    }
+  }
+}

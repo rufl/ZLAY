@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zlay.invalid/schema/aarch64-hash-review-receipt-v1.json",
+  "title": "ZLAY AArch64 hash human-provenance review receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "backlog_id",
+    "review_contract",
+    "raw_evidence",
+    "runner_record",
+    "certification_log",
+    "machine_checks",
+    "human_review",
+    "proof_boundary",
+    "payload_sha256"
+  ],
+  "properties": {
+    "schema": { "const": "zlay.aarch64-hash-review-receipt.v1" },
+    "backlog_id": { "const": "ZL-202" },
+    "review_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inputs_sha256", "files"],
+      "properties": {
+        "inputs_sha256": { "$ref": "#/$defs/sha256" },
+        "files": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/file" }
+        }
+      }
+    },
+    "raw_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "schema",
+        "file_sha256",
+        "byte_count",
+        "execution_sha256",
+        "runner_provenance_sha256",
+        "runner_preflight_sha256"
+      ],
+      "properties": {
+        "uri": { "$ref": "#/$defs/uri" },
+        "schema": { "const": "zlay.aarch64-hash-execution.v1" },
+        "file_sha256": { "$ref": "#/$defs/sha256" },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "execution_sha256": { "$ref": "#/$defs/sha256" },
+        "runner_provenance_sha256": { "$ref": "#/$defs/sha256" },
+        "runner_preflight_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runner_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256", "byte_count"],
+      "properties": {
+        "uri": { "$ref": "#/$defs/uri" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        }
+      }
+    },
+    "certification_log": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "sha256",
+        "byte_count",
+        "runner_preflight_marker",
+        "capture_marker"
+      ],
+      "properties": {
+        "uri": { "$ref": "#/$defs/uri" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "runner_preflight_marker": {
+          "type": "string",
+          "pattern": "^runner-provenance-valid preflight_sha256=[0-9a-f]{64} provenance_sha256=[0-9a-f]{64} runner_record_sha256=[0-9a-f]{64} runner_record_byte_count=[1-9][0-9]* physical_machine_proof=false backlog_closed=false$"
+        },
+        "capture_marker": {
+          "type": "string",
+          "pattern": "^evidence-captured sha256=[0-9a-f]{64} provenance_review=pending backlog_closed=false$"
+        }
+      }
+    },
+    "machine_checks": {
+      "const": {
+        "raw_contract": "passed",
+        "current_source_binding": "passed",
+        "review_contract_binding": "passed",
+        "raw_file_digest": "passed",
+        "runner_record_digest": "passed",
+        "certification_log_digest": "passed",
+        "runner_preflight_marker": "passed",
+        "capture_digest_marker": "passed",
+        "native_host_marker": "passed"
+      }
+    },
+    "human_review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "reviewer",
+        "reviewed_at_utc",
+        "notes",
+        "reviewed_claims",
+        "attestations"
+      ],
+      "properties": {
+        "status": { "const": "accepted" },
+        "reviewer": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "reviewed_at_utc": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "notes": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "reviewed_claims": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runner_id", "hardware_model", "recorded_by", "operator_claim"],
+          "properties": {
+            "runner_id": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "hardware_model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "recorded_by": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "operator_claim": { "const": "physical-non-emulated" }
+          }
+        },
+        "attestations": {
+          "const": {
+            "runner_record_identifies_raw_runner": true,
+            "hardware_model_matches_raw_claim": true,
+            "certification_log_is_complete": true,
+            "certification_log_matches_raw_execution": true,
+            "physical_non_emulation_claim_reviewed": true
+          }
+        }
+      }
+    },
+    "proof_boundary": {
+      "const": {
+        "artifact_kind": "human-provenance-review-receipt",
+        "machine_validation": "contract-digest-and-log-binding-only",
+        "physical_hardware_verified_by_machine": false,
+        "reviewer_identity_authenticated_by_machine": false,
+        "human_provenance_review_status": "accepted",
+        "automatic_backlog_closure": false,
+        "backlog_closed": false
+      }
+    },
+    "payload_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "uri": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048,
+      "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]*$"
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "byte_count", "sha256"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

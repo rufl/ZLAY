@@ -1,0 +1,381 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zlay.invalid/schema/aarch64-hash-execution-v1.json",
+  "title": "ZLAY raw AArch64 hash execution record v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "execution",
+    "execution_sha256",
+    "runner_provenance",
+    "runner_provenance_sha256",
+    "runner_record",
+    "runner_preflight_sha256",
+    "review",
+    "proof_boundary"
+  ],
+  "properties": {
+    "schema": { "const": "zlay.aarch64-hash-execution.v1" },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generated_at_utc",
+        "command",
+        "backlog_id",
+        "source",
+        "toolchain",
+        "runner",
+        "target",
+        "gates",
+        "executables",
+        "test_runs",
+        "oracle"
+      ],
+      "properties": {
+        "generated_at_utc": {
+          "type": "string",
+          "format": "date-time",
+          "maxLength": 64
+        },
+        "command": { "const": "zig build aarch64-hash-certify" },
+        "backlog_id": { "const": "ZL-202" },
+        "source": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pinned_clay_commit",
+            "clay_header_sha256",
+            "certification_inputs_sha256",
+            "pre_gate_snapshot_sha256",
+            "files"
+          ],
+          "properties": {
+            "pinned_clay_commit": {
+              "const": "e6cc36941ab2af5d81107617039d6f527a1c660b"
+            },
+            "clay_header_sha256": {
+              "const": "54aef6d5f96b14e296bebb6db4a755543e98fd7e6c188411afb2f22a4b4f7728"
+            },
+            "certification_inputs_sha256": { "$ref": "#/$defs/sha256" },
+            "pre_gate_snapshot_sha256": { "$ref": "#/$defs/sha256" },
+            "files": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "byte_count", "sha256"],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4096
+                  },
+                  "byte_count": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 16777216
+                  },
+                  "sha256": { "$ref": "#/$defs/sha256" }
+                }
+              }
+            }
+          }
+        },
+        "toolchain": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["zig_version", "optimize"],
+          "properties": {
+            "zig_version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^0\\.16\\."
+            },
+            "optimize": { "const": "Debug" }
+          }
+        },
+        "runner": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "system",
+            "release",
+            "version",
+            "machine",
+            "userspace_bits",
+            "native_guard_trace",
+            "native_guard_sha256"
+          ],
+          "properties": {
+            "system": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "release": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "version": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048
+            },
+            "machine": { "enum": ["aarch64", "arm64"] },
+            "userspace_bits": { "const": 64 },
+            "native_guard_trace": {
+              "type": "string",
+              "maxLength": 4096,
+              "pattern": "^native-host sysname=\\S+ release=\\S+ machine=(aarch64|arm64) word_bits=64\\n$"
+            },
+            "native_guard_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "target": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["selection", "triple", "arch", "os", "abi", "endian", "cpu_model"],
+          "properties": {
+            "selection": { "const": "native" },
+            "triple": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "arch": { "const": "aarch64" },
+            "os": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "abi": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "endian": { "const": "little" },
+            "cpu_model": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          }
+        },
+        "gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "pre_gate_source_snapshot",
+            "runner_record_preflight",
+            "native_host_guard",
+            "header_digest",
+            "ordinary_manifest_tests",
+            "hash_oracle_compare",
+            "native_zlay_tests",
+            "evidence_contract_tests",
+            "build_orchestration_contract"
+          ],
+          "properties": {
+            "pre_gate_source_snapshot": { "const": "passed" },
+            "runner_record_preflight": { "const": "passed" },
+            "native_host_guard": { "const": "passed" },
+            "header_digest": { "const": "passed" },
+            "ordinary_manifest_tests": { "const": "passed" },
+            "hash_oracle_compare": { "const": "passed" },
+            "native_zlay_tests": { "const": "passed" },
+            "evidence_contract_tests": { "const": "passed" },
+            "build_orchestration_contract": { "const": "passed" }
+          }
+        },
+        "executables": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "c_oracle",
+            "zig_oracle",
+            "comparator",
+            "module_tests",
+            "ordinary_manifest_tests",
+            "native_host_guard",
+            "header_checker",
+            "zig_compiler"
+          ],
+          "properties": {
+            "c_oracle": { "$ref": "#/$defs/sha256" },
+            "zig_oracle": { "$ref": "#/$defs/sha256" },
+            "comparator": { "$ref": "#/$defs/sha256" },
+            "module_tests": { "$ref": "#/$defs/sha256" },
+            "ordinary_manifest_tests": { "$ref": "#/$defs/sha256" },
+            "native_host_guard": { "$ref": "#/$defs/sha256" },
+            "header_checker": { "$ref": "#/$defs/sha256" },
+            "zig_compiler": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        "test_runs": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["module_tests", "ordinary_manifest_tests"],
+          "properties": {
+            "module_tests": { "$ref": "#/$defs/test_run" },
+            "ordinary_manifest_tests": { "$ref": "#/$defs/test_run" }
+          }
+        },
+        "oracle": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "identity",
+            "line_count",
+            "byte_count",
+            "contract_sha256",
+            "c_trace_sha256",
+            "zig_trace_sha256",
+            "c_trace",
+            "zig_trace",
+            "outputs_equal"
+          ],
+          "properties": {
+            "identity": { "const": "hash-default" },
+            "line_count": { "const": 18 },
+            "byte_count": { "const": 426 },
+            "contract_sha256": {
+              "const": "68b1ce5dfef146735d34889f337fa3f73a597b0511a5fc511f9e399d263dc787"
+            },
+            "c_trace_sha256": {
+              "const": "68b1ce5dfef146735d34889f337fa3f73a597b0511a5fc511f9e399d263dc787"
+            },
+            "zig_trace_sha256": {
+              "const": "68b1ce5dfef146735d34889f337fa3f73a597b0511a5fc511f9e399d263dc787"
+            },
+            "c_trace": { "type": "string", "maxLength": 426 },
+            "zig_trace": { "type": "string", "maxLength": 426 },
+            "outputs_equal": { "const": true }
+          }
+        }
+      }
+    },
+    "execution_sha256": { "$ref": "#/$defs/sha256" },
+    "runner_provenance": { "$ref": "#/$defs/provenance" },
+    "runner_provenance_sha256": { "$ref": "#/$defs/sha256" },
+    "runner_record": { "$ref": "#/$defs/runner_record" },
+    "runner_preflight_sha256": { "$ref": "#/$defs/sha256" },
+    "review": {
+      "const": {
+        "status": "pending",
+        "reviewer": null,
+        "reviewed_at_utc": null,
+        "notes": null
+      }
+    },
+    "proof_boundary": {
+      "const": {
+        "artifact_kind": "raw-execution-record",
+        "machine_validation": "execution-and-runner-binding-contract-only",
+        "physical_hardware_machine_verified": false,
+        "provenance_review_status": "pending",
+        "backlog_closed": false
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "test_run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "total",
+        "passed",
+        "skipped",
+        "skipped_names",
+        "byte_count",
+        "sha256",
+        "log"
+      ],
+      "properties": {
+        "total": { "type": "integer", "minimum": 1 },
+        "passed": { "type": "integer", "minimum": 1 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "skipped_names": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1, "maxLength": 4096 }
+        },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "log": { "type": "string", "minLength": 1, "maxLength": 16777216 }
+      }
+    },
+    "runner_record": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uri", "sha256", "byte_count"],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]*$"
+        },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_count": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema",
+        "runner_id",
+        "hardware_model",
+        "recorded_by",
+        "operator_claim",
+        "attachment"
+      ],
+      "properties": {
+        "schema": { "const": "zlay.aarch64-runner-provenance.v1" },
+        "runner_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "hardware_model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "recorded_by": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "operator_claim": { "const": "physical-non-emulated" },
+        "attachment": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["uri", "sha256"],
+          "properties": {
+            "uri": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2048,
+              "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^\\s]*$"
+            },
+            "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      }
+    }
+  }
+}

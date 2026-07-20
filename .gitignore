@@ -1,0 +1,11 @@
+/.zig-cache/
+/.zig-global-cache/
+/.zlay-evidence-test-*/
+/.zlay-review-test-*/
+/zig-cache/
+/zig-out/
+__pycache__/
+*.py[cod]
+*.o
+*.obj
+.pi/
