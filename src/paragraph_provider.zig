@@ -23,6 +23,7 @@ pub const Failure = struct {
 
 pub const ContractError = error{
     InvalidUtf8,
+    InvalidTextStyle,
     InvalidAvailableWidth,
     InvalidIntrinsicMetrics,
     InvalidParagraphMetrics,
@@ -63,6 +64,7 @@ pub const OpenTypeFeature = struct {
     tag: Tag,
     value: u32 = 1,
     byte_start: u32 = 0,
+    /// Exclusive byte offset. `maxInt(u32)` means the end of the text.
     byte_end: u32 = std.math.maxInt(u32),
 };
 
@@ -101,7 +103,9 @@ pub const LineHeight = union(enum) {
 };
 
 /// Lossless provider-facing typography and paragraph state. All slices are
-/// borrowed for one provider callback; providers copy anything they retain.
+/// borrowed; providers copy anything they retain. Context callers must keep
+/// them valid through `endLayout` and any retained exit transition that reuses
+/// the declaration.
 pub const TextStyle = struct {
     font_stack_id: u32 = 0,
     size_px: f32 = 16,
@@ -234,6 +238,7 @@ pub const Provider = struct {
         request: IntrinsicRequest,
     ) ContractError!IntrinsicOutcome {
         try validateText(request.text);
+        try validateTextStyle(request.text_style, request.text.len);
         const outcome = self.vtable.measure_intrinsic(
             self.context,
             scratch_allocator,
@@ -254,6 +259,7 @@ pub const Provider = struct {
         request: LayoutRequest,
     ) ContractError!LayoutOutcome {
         try validateText(request.text);
+        try validateTextStyle(request.text_style, request.text.len);
         if (!finiteNonNegative(request.available_width_px)) {
             return error.InvalidAvailableWidth;
         }
@@ -269,11 +275,15 @@ pub const Provider = struct {
         return outcome;
     }
 
+    /// Acquire one additional provider-owned reference for work that outlives
+    /// the current command frame. The caller must release it exactly once.
     pub fn retainParagraph(self: Provider, key: LeaseKey) ContractError!LeaseOutcome {
         try validateLeaseKey(key);
         return self.vtable.retain_paragraph(self.context, key);
     }
 
+    /// Release one provider-owned reference previously returned by layout or
+    /// acquired with `retainParagraph`.
     pub fn releaseParagraph(self: Provider, key: LeaseKey) ContractError!LeaseOutcome {
         try validateLeaseKey(key);
         return self.vtable.release_paragraph(self.context, key);
@@ -284,6 +294,35 @@ fn validateText(text: []const u8) ContractError!void {
     if (!std.unicode.utf8ValidateSlice(text)) return error.InvalidUtf8;
 }
 
+fn validateTextStyle(style: TextStyle, text_length_bytes: usize) ContractError!void {
+    const text_length: u32 = std.math.cast(u32, text_length_bytes) orelse
+        return error.InvalidTextStyle;
+    if (!finiteNonNegative(style.size_px)) return error.InvalidTextStyle;
+    if (!finite(style.letter_spacing_px)) return error.InvalidTextStyle;
+    if (!finite(style.word_spacing_px)) return error.InvalidTextStyle;
+    if (!std.unicode.utf8ValidateSlice(style.language)) return error.InvalidTextStyle;
+    if (style.max_lines) |max_lines| {
+        if (max_lines == 0) return error.InvalidTextStyle;
+    }
+    switch (style.line_height) {
+        .font_default => {},
+        .multiplier => |value| if (!finite(value) or value <= 0) return error.InvalidTextStyle,
+        .absolute_px => |value| if (!finiteNonNegative(value)) return error.InvalidTextStyle,
+    }
+    for (style.features) |feature| {
+        if (feature.byte_start > text_length) return error.InvalidTextStyle;
+        if (feature.byte_start > feature.byte_end) return error.InvalidTextStyle;
+        if (feature.byte_end != std.math.maxInt(u32) and
+            feature.byte_end > text_length)
+        {
+            return error.InvalidTextStyle;
+        }
+    }
+    for (style.variations) |variation| {
+        if (!finite(variation.value)) return error.InvalidTextStyle;
+    }
+}
+
 fn validateIntrinsicMetrics(value: IntrinsicMetrics) ContractError!void {
     if (!finiteNonNegative(value.min_content_width) or
         !finiteNonNegative(value.max_content_width) or
@@ -291,6 +330,7 @@ fn validateIntrinsicMetrics(value: IntrinsicMetrics) ContractError!void {
         !finiteNonNegative(value.first_baseline) or
         !finiteNonNegative(value.last_baseline) or
         value.min_content_width > value.max_content_width or
+        value.first_baseline > value.last_baseline or
         value.first_baseline > value.height or
         value.last_baseline > value.height)
     {
@@ -299,8 +339,8 @@ fn validateIntrinsicMetrics(value: IntrinsicMetrics) ContractError!void {
 }
 
 fn validateParagraphMetrics(value: ParagraphMetrics) ContractError!void {
-    if (!finite(value.logical.advance.x) or
-        !finite(value.logical.advance.y) or
+    if (!finiteNonNegative(value.logical.advance.x) or
+        !finiteNonNegative(value.logical.advance.y) or
         !finiteNonNegative(value.logical.ascent) or
         !finiteNonNegative(value.logical.descent) or
         !finiteNonNegative(value.logical.line_gap) or
@@ -337,7 +377,9 @@ fn finiteNonNegative(value: f32) bool {
 const ValidationProvider = struct {
     calls: usize = 0,
     invalid_intrinsic: bool = false,
+    invalid_baseline_order: bool = false,
     invalid_layout: bool = false,
+    invalid_paragraph_metrics: bool = false,
 
     fn from(context: *anyopaque) *ValidationProvider {
         return @ptrCast(@alignCast(context));
@@ -354,7 +396,7 @@ const ValidationProvider = struct {
             .min_content_width = if (self.invalid_intrinsic) 20 else 10,
             .max_content_width = 15,
             .height = 12,
-            .first_baseline = 9,
+            .first_baseline = if (self.invalid_baseline_order) 10 else 9,
             .last_baseline = 9,
         } };
     }
@@ -370,7 +412,14 @@ const ValidationProvider = struct {
             .handle = if (self.invalid_layout) .invalid else @enumFromInt(4),
             .generation = 2,
             .paragraph_metrics = .{
-                .logical = .{ .advance = .{ .x = 15, .y = 12 }, .ascent = 9, .descent = 3 },
+                .logical = .{
+                    .advance = .{
+                        .x = if (self.invalid_paragraph_metrics) -1 else 15,
+                        .y = 12,
+                    },
+                    .ascent = 9,
+                    .descent = 3,
+                },
                 .ink = .{ .min = .{}, .max = .{ .x = 15, .y = 12 } },
                 .line_count = 1,
             },
@@ -410,16 +459,62 @@ test "provider wrapper rejects invalid requests and results before host adoption
         .text_style = .{},
     }));
     state.invalid_intrinsic = false;
+    state.invalid_baseline_order = true;
+    try std.testing.expectError(
+        error.InvalidIntrinsicMetrics,
+        provider.measureIntrinsic(std.testing.allocator, .{
+            .text = "valid",
+            .text_style = .{},
+        }),
+    );
+    state.invalid_baseline_order = false;
     state.invalid_layout = true;
     try std.testing.expectError(error.InvalidParagraphHandle, provider.layoutParagraph(std.testing.allocator, .{
         .text = "valid",
         .text_style = .{},
         .available_width_px = 20,
     }));
+    state.invalid_layout = false;
+    state.invalid_paragraph_metrics = true;
+    try std.testing.expectError(
+        error.InvalidParagraphMetrics,
+        provider.layoutParagraph(std.testing.allocator, .{
+            .text = "valid",
+            .text_style = .{},
+            .available_width_px = 20,
+        }),
+    );
     try std.testing.expectError(error.InvalidParagraphHandle, provider.releaseParagraph(.{
         .handle = .invalid,
         .generation = 2,
     }));
+}
+
+test "provider wrapper rejects non-finite styles and out-of-range feature spans" {
+    var state = ValidationProvider{};
+    const provider = Provider{ .context = &state, .vtable = &validation_vtable };
+
+    try std.testing.expectError(
+        error.InvalidTextStyle,
+        provider.measureIntrinsic(std.testing.allocator, .{
+            .text = "valid",
+            .text_style = .{ .size_px = std.math.nan(f32) },
+        }),
+    );
+    try std.testing.expectError(
+        error.InvalidTextStyle,
+        provider.measureIntrinsic(std.testing.allocator, .{
+            .text = "valid",
+            .text_style = .{
+                .features = &.{.{
+                    .tag = Tag.fromBytes("kern".*),
+                    .byte_start = 4,
+                    .byte_end = 3,
+                }},
+            },
+        }),
+    );
+    try std.testing.expectEqual(@as(usize, 0), state.calls);
 }
 
 test "legacy bridge preserves full unsigned values without changing semantics" {

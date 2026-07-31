@@ -30,8 +30,10 @@ All notable changes to ZLAY are recorded here. The format follows
   default, plus a provider-facing style model that retains full font-stack
   identity, float/signed tracking, script/language/direction, features,
   variations, advanced line height, wrap/alignment/overflow, and line limits
-  without legacy narrowing. The active provider path now validates intrinsic
-  and final-width results, caches one lease per exact text/style/width key,
+  without legacy narrowing. `Context.textWithParagraphStyle` exposes those
+  advanced fields directly while the legacy path remains lossless. The
+  provider boundary validates style, intrinsic, and final-width results,
+  caches one lease per exact text/style/width key,
   transports it through existing custom commands with a current-array resolver,
   rejects copied/stale custom commands, fails closed without legacy mixing, and
   releases leases on every frame/reset/replacement/failure/destruction path.
@@ -50,6 +52,13 @@ All notable changes to ZLAY are recorded here. The format follows
   that consume the same real 14-command frame and return `0x5a1a110e`.
 - A maintained path-dependency consumer that compiles the documented package
   wiring and dispatches a real frame through a backend declared outside ZLAY.
+- A read-only GitHub Actions check, security policy, and tailored source-of-
+  truth, memory, roadmap, release-boundary, and proof documentation.
+- A release procedure and isolated archive-URL consumer smoke, leaving only the
+  owner-selected hosted URL, immutable tag, and publication proof outside the
+  local checkout. The first release scope is native x86-64 Linux plus the
+  maintained freestanding-WebAssembly lanes; AArch64 certification remains
+  separate tracked work.
 - Retained element queries, prior-frame pointer hit testing, hover callbacks,
   floating-root capture, internal/external scrolling, drag momentum, and nested
   scroll priority.
@@ -179,8 +188,8 @@ All notable changes to ZLAY are recorded here. The format follows
 
 ### Changed
 
-- Refreshed local verification on 2026-07-19: the C-free check passes 26/26
-  steps and 205/205 combined tests. ZL-202 remains honestly blocked on physical
+- Refreshed local verification on 2026-07-31: the C-free check passes 26/26
+  steps and 210/210 combined tests. ZL-202 remains honestly blocked on physical
   non-emulated AArch64 evidence; no substitute implementation was added.
 - Clarified that repository tooling requires Python 3.10 or newer, exact-byte
   evidence import is mandatory for ZL-202 closure, and cache-managed runner
@@ -206,6 +215,26 @@ All notable changes to ZLAY are recorded here. The format follows
 
 ### Fixed
 
+- Preserved borrowed custom-command identity through the checked renderer
+  dispatcher, allowing font backends to resolve generation-bound paragraph
+  handles with `Context.paragraphRenderData` instead of receiving an
+  unresolvable command copy. Paragraph resolution now validates exact command
+  and cache-entry addresses in constant time instead of linearly rescanning
+  both arrays for every rendered paragraph.
+- Replaced quadratic paragraph intrinsic/final-width cache scans with
+  collision-resistant content/style keys and context-owned hash maps, while
+  reserving possible post-transition entries before application callbacks.
+- Replaced the stable quadratic floating-root z-order pass with Zig's stable
+  `std.mem.sort` and bounded the iterative height walk explicitly.
+- Clamped the built-in inspector to narrow viewports and reduced its details
+  pane on short viewports, preserving usable list space and non-negative render
+  geometry without changing ordinary 400-by-300 inspector output.
+- Refreshed the non-certifying AArch64 QEMU lane on current sources: 16/16
+  steps, 205/206 module tests with the exact x86-only skip, 4/4 manifest tests,
+  and unchanged 18-line C/Zig target-default hash parity.
+- Rejected paragraph providers whose intrinsic baselines are reversed or whose
+  logical width/height advances are negative before those metrics can become
+  layout or render geometry.
 - Moved the native renderer/profile examples' 1 MiB fixed-buffer arenas out of
   platform-default stacks, and covered every renderer scope/array-metadata
   rejection plus the no-backend-mutation guarantee.

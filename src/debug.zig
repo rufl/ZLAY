@@ -123,7 +123,8 @@ pub fn elementConfigTypes(node: layout.Node, output: *[10]ConfigType) []const Co
 pub const HighlightInput = struct {
     pointer: types.Vector2,
     layout_dimensions: types.Dimensions,
-    view_width: u32 = default_view_width,
+    view_width: f32 = @floatFromInt(default_view_width),
+    details_pane_height: f32 = @floatFromInt(details_height),
     scroll_position: ?types.Vector2 = null,
     external_scroll_handling_enabled: bool = false,
 };
@@ -134,22 +135,28 @@ pub fn highlightedRow(input: HighlightInput) i32 {
     if (!std.math.isFinite(input.pointer.x) or
         !std.math.isFinite(input.pointer.y) or
         !std.math.isFinite(input.layout_dimensions.width) or
-        !std.math.isFinite(input.layout_dimensions.height))
+        !std.math.isFinite(input.layout_dimensions.height) or
+        !std.math.isFinite(input.view_width) or
+        !std.math.isFinite(input.details_pane_height) or
+        input.view_width < 0 or
+        input.details_pane_height < 0)
     {
         return -1;
     }
     var scroll_y_offset: f32 = 0;
-    var pointer_in_debug_view = input.pointer.y < input.layout_dimensions.height - details_height;
+    var pointer_in_debug_view = input.pointer.y <
+        input.layout_dimensions.height - input.details_pane_height;
     if (input.scroll_position) |position| {
         if (!std.math.isFinite(position.y)) return -1;
         if (!input.external_scroll_handling_enabled) {
             scroll_y_offset = position.y;
         } else {
-            pointer_in_debug_view = input.pointer.y + position.y < input.layout_dimensions.height - details_height;
+            pointer_in_debug_view = input.pointer.y + position.y <
+                input.layout_dimensions.height - input.details_pane_height;
         }
     }
     if (!pointer_in_debug_view) return -1;
-    if (input.pointer.x < input.layout_dimensions.width - @as(f32, @floatFromInt(input.view_width))) return -1;
+    if (input.pointer.x < input.layout_dimensions.width - input.view_width) return -1;
 
     const row_float = (input.pointer.y - scroll_y_offset) / @as(f32, @floatFromInt(row_height));
     const minimum: f32 = @floatFromInt(std.math.minInt(i32));
@@ -170,7 +177,22 @@ pub fn rowColor(index: i32, selected_row_index: i32, highlighted_row: i32) types
 }
 
 pub fn contentWidth(layout_width: f32, debug_enabled: bool, view_width: u32) f32 {
-    return if (debug_enabled) layout_width - @as(f32, @floatFromInt(view_width)) else layout_width;
+    if (!debug_enabled) return layout_width;
+    return @max(layout_width - effectiveViewWidth(layout_width, view_width), 0);
+}
+
+pub fn effectiveViewWidth(layout_width: f32, configured_width: u32) f32 {
+    if (!std.math.isFinite(layout_width) or layout_width <= 0) return 0;
+    return @min(layout_width, @as(f32, @floatFromInt(configured_width)));
+}
+
+pub fn effectiveDetailsHeight(layout_height: f32) f32 {
+    if (!std.math.isFinite(layout_height) or layout_height <= 0) return 0;
+    const minimum_list_height: f32 = @floatFromInt(row_height * 2 + 2);
+    return @min(
+        @as(f32, @floatFromInt(details_height)),
+        @max(layout_height - minimum_list_height, 0),
+    );
 }
 
 pub fn isOffscreen(box: types.BoundingBox, dimensions: types.Dimensions, culling_enabled: bool) bool {
@@ -508,6 +530,10 @@ test "highlighted row rejects non-finite and out-of-range coordinates" {
     non_finite.pointer = .{ .x = 900, .y = 60 };
     non_finite.scroll_position = .{ .y = std.math.inf(f32) };
     try std.testing.expectEqual(@as(i32, -1), highlightedRow(non_finite));
+
+    non_finite.scroll_position = null;
+    non_finite.details_pane_height = std.math.nan(f32);
+    try std.testing.expectEqual(@as(i32, -1), highlightedRow(non_finite));
 }
 
 test "row colors apply selection before hover brightening" {
@@ -639,9 +665,12 @@ test "configuration pane enum names preserve pinned spellings" {
     try std.testing.expectEqualStrings("ATTACHED_PARENT", clipToName(.attached_parent));
 }
 
-test "debug width and offscreen checks retain upstream edge behavior" {
+test "debug dimensions stay usable in viewports smaller than the inspector defaults" {
     try std.testing.expectEqual(@as(f32, 600), contentWidth(1000, true, 400));
-    try std.testing.expectEqual(@as(f32, -100), contentWidth(300, true, 400));
+    try std.testing.expectEqual(@as(f32, 0), contentWidth(300, true, 400));
+    try std.testing.expectEqual(@as(f32, 300), effectiveViewWidth(300, 400));
+    try std.testing.expectEqual(@as(f32, 118), effectiveDetailsHeight(180));
+    try std.testing.expectEqual(@as(f32, 0), effectiveDetailsHeight(40));
     try std.testing.expect(!isOffscreen(.{ .x = 100, .y = 100 }, .{ .width = 100, .height = 100 }, true));
     try std.testing.expect(isOffscreen(.{ .x = 100.01, .y = 0 }, .{ .width = 100, .height = 100 }, true));
     try std.testing.expect(!isOffscreen(.{ .x = 101, .y = 0 }, .{ .width = 100, .height = 100 }, false));

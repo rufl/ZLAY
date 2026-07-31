@@ -231,9 +231,9 @@ fn scratchListsAlias(left: *const std.ArrayList(usize), right: *const std.ArrayL
     return left_start < right_end and right_start < left_end;
 }
 
-/// Port of Clay's breadth-first container distribution pass. This function is
-/// intentionally mutation-oriented so its `f32` operation order stays close to
-/// the source implementation.
+/// Mutation-oriented port of Clay's breadth-first container distribution pass.
+/// The direct writes preserve the source implementation's `f32` operation
+/// order.
 pub fn sizeContainersAlongAxis(
     allocator: std.mem.Allocator,
     nodes: []Node,
@@ -674,8 +674,11 @@ fn traverseHeightComponent(
     nodes[root_index].height_traversal_state = .active;
     nodes[root_index].height_traversal_cursor = 0;
     var current = root_index;
+    var step_count: usize = 0;
+    const step_count_max = std.math.mul(usize, nodes.len, 2) catch
+        return error.InvalidTreeParent;
 
-    while (true) {
+    while (step_count < step_count_max) : (step_count += 1) {
         const node = &nodes[current];
         const children = node.children(child_indices);
         if (node.height_traversal_cursor < children.len) {
@@ -692,13 +695,14 @@ fn traverseHeightComponent(
 
         if (apply_heights) propagateHeightNode(nodes, child_indices, current);
         node.height_traversal_state = .complete;
-        if (current == root_index) break;
+        if (current == root_index) return;
         const parent_index = node.parent_index orelse return error.InvalidTreeParent;
         if (parent_index >= nodes.len or nodes[parent_index].height_traversal_state != .active) {
             return error.InvalidTreeParent;
         }
         current = parent_index;
     }
+    return error.InvalidTreeParent;
 }
 
 fn propagateHeightNode(nodes: []Node, child_indices: []const usize, node_index: usize) void {
@@ -726,15 +730,29 @@ fn propagateHeightNode(nodes: []Node, child_indices: []const usize, node_index: 
 }
 
 pub fn sortRootsByZ(roots: []Root) void {
-    var sort_max = roots.len;
-    while (sort_max > 1) : (sort_max -= 1) {
-        var index: usize = 0;
-        while (index + 1 < sort_max) : (index += 1) {
-            if (roots[index + 1].z_index < roots[index].z_index) {
-                std.mem.swap(Root, &roots[index], &roots[index + 1]);
-            }
+    std.mem.sort(Root, roots, {}, struct {
+        fn lessThan(_: void, left: Root, right: Root) bool {
+            return left.z_index < right.z_index;
         }
-    }
+    }.lessThan);
+}
+
+test "root z sort is ordered and stable" {
+    var roots = [_]Root{
+        .{ .element_index = 1, .z_index = 4 },
+        .{ .element_index = 2, .z_index = -1 },
+        .{ .element_index = 3, .z_index = 4 },
+        .{ .element_index = 4, .z_index = 2 },
+    };
+
+    sortRootsByZ(&roots);
+
+    try std.testing.expectEqualSlices(usize, &.{ 2, 4, 1, 3 }, &.{
+        roots[0].element_index,
+        roots[1].element_index,
+        roots[2].element_index,
+        roots[3].element_index,
+    });
 }
 
 test "grow children divide remaining width" {

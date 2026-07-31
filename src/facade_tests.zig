@@ -447,6 +447,8 @@ fn verifyNativeAdditions(comptime zlay: type) void {
     requireExactSignature(zlay.Context.getParagraphProvider, &.{*const zlay.Context}, ?zlay.ParagraphProvider, "optional paragraph provider getter");
     requireExactSignature(zlay.Context.getLastParagraphProviderFailure, &.{*const zlay.Context}, ?zlay.ParagraphProviderFailure, "paragraph provider diagnostic");
     requireExactSignature(zlay.Context.paragraphRenderData, &.{ *const zlay.Context, *const zlay.RenderCommand }, ?*const zlay.ParagraphRenderData, "paragraph command resolver");
+    requireFallibleSignature(zlay.Context.textWithParagraphStyle, &.{ *zlay.Context, zlay.String, zlay.TextElementConfig, zlay.ParagraphTextStyle }, void, "advanced paragraph text");
+    requireFallibleSignature(zlay.Context.textSliceWithParagraphStyle, &.{ *zlay.Context, []const u8, zlay.TextElementConfig, zlay.ParagraphTextStyle }, void, "advanced paragraph text slice");
     requireExactSignature(zlay.ParagraphTextStyle.fromLegacy, &.{zlay.TextElementConfig}, zlay.ParagraphTextStyle, "legacy paragraph style bridge");
 
     inline for (renderer_additions) |name| requireDecl(zlay.renderer, name, "renderer addition");

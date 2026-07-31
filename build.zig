@@ -250,7 +250,7 @@ pub fn build(b: *std.Build) void {
         aarch64_evidence_validate_step.dependOn(&validate_evidence.step);
     } else {
         const missing_evidence = b.addFail(
-            "aarch64-hash-evidence-validate requires -Daarch64-evidence=/path/to/evidence.json",
+            "aarch64-hash-evidence-validate requires -Daarch64-evidence=/absolute/evidence.json",
         );
         aarch64_evidence_validate_step.dependOn(&missing_evidence.step);
     }

@@ -95,9 +95,10 @@ pub fn validateArray(commands: types.RenderCommandArray) Error!Stats {
 
 /// Dispatch a validated stream to a concrete backend. `Backend` must provide
 /// the ten methods used below, each returning an error union with `void` as
-/// its payload. Payload-bearing methods receive only the active union field.
-/// Validation is a complete first pass, so malformed scope structure cannot
-/// partially mutate the backend.
+/// its payload. Payload-bearing methods receive only the active union field;
+/// `custom` also receives the original command pointer so context-owned typed
+/// payloads can validate command identity. Validation is a complete first pass,
+/// so malformed scope structure cannot partially mutate the backend.
 pub fn consume(
     comptime Backend: type,
     backend: *Backend,
@@ -105,17 +106,20 @@ pub fn consume(
 ) anyerror!Stats {
     const stats = try validate(commands);
 
-    for (commands) |command| switch (command.command_type) {
-        .none => try backend.none(command),
-        .rectangle => try backend.rectangle(command, command.render_data.rectangle),
-        .border => try backend.border(command, command.render_data.border),
-        .text => try backend.text(command, command.render_data.text),
-        .image => try backend.image(command, command.render_data.image),
+    for (commands) |*command| switch (command.command_type) {
+        .none => try backend.none(command.*),
+        .rectangle => try backend.rectangle(command.*, command.render_data.rectangle),
+        .border => try backend.border(command.*, command.render_data.border),
+        .text => try backend.text(command.*, command.render_data.text),
+        .image => try backend.image(command.*, command.render_data.image),
         .custom => try backend.custom(command, command.render_data.custom),
-        .scissor_start => try backend.scissorStart(command, command.render_data.clip),
-        .scissor_end => try backend.scissorEnd(command),
-        .overlay_color_start => try backend.overlayColorStart(command, command.render_data.overlay_color),
-        .overlay_color_end => try backend.overlayColorEnd(command),
+        .scissor_start => try backend.scissorStart(command.*, command.render_data.clip),
+        .scissor_end => try backend.scissorEnd(command.*),
+        .overlay_color_start => try backend.overlayColorStart(
+            command.*,
+            command.render_data.overlay_color,
+        ),
+        .overlay_color_end => try backend.overlayColorEnd(command.*),
     };
 
     return stats;
@@ -143,6 +147,7 @@ const Probe = struct {
     length: usize = 0,
     image_token: *u8,
     custom_token: *u8,
+    custom_command: *const types.RenderCommand,
 
     fn record(self: *Probe, command_type: types.RenderCommandType) !void {
         if (self.length >= self.order.len) return error.TooManyCommands;
@@ -179,10 +184,14 @@ const Probe = struct {
         try self.record(.image);
     }
 
-    fn custom(self: *Probe, command: types.RenderCommand, data: types.CustomRenderData) !void {
-        try std.testing.expectEqual(types.RenderCommandType.custom, command.command_type);
+    fn custom(
+        self: *Probe,
+        command: *const types.RenderCommand,
+        data: types.CustomRenderData,
+    ) !void {
+        try std.testing.expectEqual(@intFromPtr(self.custom_command), @intFromPtr(command));
         try std.testing.expectEqual(@intFromPtr(self.custom_token), @intFromPtr(data.custom_data.?));
-        try self.record(.custom);
+        try self.record(command.command_type);
     }
 
     fn scissorStart(self: *Probe, command: types.RenderCommand, data: types.ClipRenderData) !void {
@@ -211,7 +220,7 @@ const Probe = struct {
 test "adapter dispatches every command through only its active payload" {
     var image_token: u8 = 1;
     var custom_token: u8 = 2;
-    const commands = [_]types.RenderCommand{
+    var commands = [_]types.RenderCommand{
         .{ .command_type = .none },
         .{ .render_data = .{ .overlay_color = .{ .color = .{ .b = 99 } } }, .command_type = .overlay_color_start },
         .{ .render_data = .{ .image = .{ .image_data = &image_token } }, .command_type = .image },
@@ -225,9 +234,17 @@ test "adapter dispatches every command through only its active payload" {
         .{ .command_type = .overlay_color_end },
         .{ .command_type = .scissor_end },
     };
-    var probe = Probe{ .image_token = &image_token, .custom_token = &custom_token };
+    var probe = Probe{
+        .image_token = &image_token,
+        .custom_token = &custom_token,
+        .custom_command = &commands[3],
+    };
 
-    const stats = try consume(Probe, &probe, &commands);
+    const stats = try consumeArray(Probe, &probe, .{
+        .capacity = @intCast(commands.len),
+        .length = @intCast(commands.len),
+        .internal_array = &commands,
+    });
 
     try std.testing.expectEqual(commands.len, stats.commandCount());
     try std.testing.expectEqual(@as(usize, 1), stats.max_scissor_depth);
@@ -268,7 +285,11 @@ const CountingBackend = struct {
     fn image(self: *CountingBackend, _: types.RenderCommand, _: types.ImageRenderData) !void {
         try self.called();
     }
-    fn custom(self: *CountingBackend, _: types.RenderCommand, _: types.CustomRenderData) !void {
+    fn custom(
+        self: *CountingBackend,
+        _: *const types.RenderCommand,
+        _: types.CustomRenderData,
+    ) !void {
         try self.called();
     }
     fn scissorStart(self: *CountingBackend, _: types.RenderCommand, _: types.ClipRenderData) !void {

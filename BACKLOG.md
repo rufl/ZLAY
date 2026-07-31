@@ -6,12 +6,31 @@ with the command or artifact that proves completion.
 The normative upstream snapshot is Nic Barker's Clay `clay.h` at
 `e6cc36941ab2af5d81107617039d6f527a1c660b`; see `docs/UPSTREAM.md`.
 
+## Source Of Truth Policy
+
+- `[truth:code]` `src/` is the production implementation; production remains
+  Zig-only and dependency-free.
+- `[truth:test]` `zig build verify-all` is the maintained aggregate proof gate;
+  `.overzeer/proof-results.md` records maintainer-run outcomes.
+- `[truth:docs]` `BACKLOG.md` contains only open work, while completed work and
+  its proof move to `BACKLOG_ARCHIVE.md`.
+- `[truth:upstream]` `tests/oracle/clay.h`, `docs/UPSTREAM.md`, and the recorded
+  SHA-256 pin define the differential parity baseline.
+- A source or documentation claim is not complete solely because code exists;
+  closure requires the acceptance proof named by its backlog row.
+
 The broad ZL-115 certification row was superseded by the 2026-07-13 audit and
 decomposed into measurable proof obligations; its lineage is retained in
 `BACKLOG_ARCHIVE.md`. All host/pinned-source behavioral and proof-integrity rows
 are now archived. The only open evidence row is target-default hash execution
 on real AArch64 hardware. Supplemental static Debug AArch64 execution under
 QEMU is complete and archived, but is explicitly non-certifying.
+
+## P1 — first release
+
+| ID | Work | Acceptance proof | Status |
+|---|---|---|---|
+| ZL-218 | Publish the first supported ZLAY package release | Owner selects the canonical source URL; package version leaves `-dev`; a clean URL-based consumer build, read-only CI run, signed/tagged release, and published changelog all pass | The first release is scoped to verified native x86-64 Linux plus the maintained freestanding-WebAssembly compile/runtime lanes; physical AArch64 certification is explicitly deferred to ZL-202. Publication remains externally blocked only on the canonical destination and resulting hosted URL/tag proof. Local source, path consumer, generated `file://` archive consumer, security, documentation, and aggregate verification gates pass; `docs/RELEASE.md` records the remaining procedure. |
 
 ## P2 — cross-target proof
 

@@ -17,6 +17,8 @@ const debug_inspector = @import("debug.zig");
 const renderer = @import("renderer.zig");
 const paragraph_provider = @import("paragraph_provider.zig");
 
+const Sha256 = std.crypto.hash.sha2.Sha256;
+
 pub const Error = error{
     LayoutAlreadyOpen,
     LayoutNotOpen,
@@ -34,6 +36,15 @@ pub const Error = error{
     ParagraphProviderFailed,
     ParagraphProviderContractViolation,
     ParagraphProviderStaleHandle,
+    ParagraphProviderNotInstalled,
+};
+
+const ParagraphProviderError = error{
+    ParagraphProviderFailed,
+    ParagraphProviderContractViolation,
+    ParagraphProviderStaleHandle,
+    TextMeasurementCapacityExceeded,
+    OutOfMemory,
 };
 
 pub const Options = struct {
@@ -66,6 +77,7 @@ const OpenEntry = struct {
 const TextRecord = struct {
     text: types.String,
     config: types.TextElementConfig,
+    paragraph_style: paragraph_provider.TextStyle,
     preferred_dimensions: types.Dimensions,
     min_width: f32,
     wrapped_start: usize = 0,
@@ -73,19 +85,117 @@ const TextRecord = struct {
     paragraph_layout_index: ?usize = null,
 };
 
+const ParagraphCacheKey = struct {
+    provider_context: usize,
+    provider_vtable: usize,
+    text_digest: [Sha256.digest_length]u8,
+    style_digest: [Sha256.digest_length]u8,
+
+    fn init(
+        provider: paragraph_provider.Provider,
+        text: types.String,
+        style: paragraph_provider.TextStyle,
+    ) ParagraphCacheKey {
+        return .{
+            .provider_context = @intFromPtr(provider.context),
+            .provider_vtable = @intFromPtr(provider.vtable),
+            .text_digest = hashParagraphText(text.asSlice()),
+            .style_digest = hashParagraphStyle(style),
+        };
+    }
+};
+
+const ParagraphLayoutKey = struct {
+    paragraph: ParagraphCacheKey,
+    available_width_bits: u32,
+
+    fn init(
+        provider: paragraph_provider.Provider,
+        text: types.String,
+        style: paragraph_provider.TextStyle,
+        available_width_px: f32,
+    ) ParagraphLayoutKey {
+        return .{
+            .paragraph = ParagraphCacheKey.init(provider, text, style),
+            .available_width_bits = @bitCast(available_width_px),
+        };
+    }
+};
+
 const ParagraphIntrinsicCacheEntry = struct {
-    provider: paragraph_provider.Provider,
-    text: types.String,
-    config: types.TextElementConfig,
     metrics: paragraph_provider.IntrinsicMetrics,
 };
 
 const ParagraphLayoutCacheEntry = struct {
     provider: paragraph_provider.Provider,
-    text: types.String,
-    config: types.TextElementConfig,
     render_data: paragraph_provider.RenderData,
 };
+
+fn hashParagraphText(text: []const u8) [Sha256.digest_length]u8 {
+    var digest: [Sha256.digest_length]u8 = undefined;
+    Sha256.hash(text, &digest, .{});
+    return digest;
+}
+
+fn hashParagraphScalar(
+    comptime T: type,
+    hasher: *Sha256,
+    value: T,
+) void {
+    var copy = value;
+    hasher.update(std.mem.asBytes(&copy));
+}
+
+fn hashParagraphStyle(
+    style: paragraph_provider.TextStyle,
+) [Sha256.digest_length]u8 {
+    var hasher = Sha256.init(.{});
+    hashParagraphScalar(u32, &hasher, style.font_stack_id);
+    hashParagraphScalar(u32, &hasher, @bitCast(style.size_px));
+    hashParagraphScalar(u8, &hasher, @intFromEnum(style.direction));
+    hashParagraphScalar(u8, &hasher, @intFromBool(style.script != null));
+    if (style.script) |script| {
+        hashParagraphScalar(u32, &hasher, @intFromEnum(script));
+    }
+    hashParagraphScalar(u64, &hasher, @intCast(style.language.len));
+    hasher.update(style.language);
+    hashParagraphScalar(u64, &hasher, @intCast(style.features.len));
+    for (style.features) |feature| {
+        hashParagraphScalar(u32, &hasher, @intFromEnum(feature.tag));
+        hashParagraphScalar(u32, &hasher, feature.value);
+        hashParagraphScalar(u32, &hasher, feature.byte_start);
+        hashParagraphScalar(u32, &hasher, feature.byte_end);
+    }
+    hashParagraphScalar(u64, &hasher, @intCast(style.variations.len));
+    for (style.variations) |variation| {
+        hashParagraphScalar(u32, &hasher, @intFromEnum(variation.tag));
+        hashParagraphScalar(u32, &hasher, @bitCast(variation.value));
+    }
+    hashParagraphScalar(u32, &hasher, @bitCast(style.letter_spacing_px));
+    hashParagraphScalar(u32, &hasher, @bitCast(style.word_spacing_px));
+    switch (style.line_height) {
+        .font_default => hashParagraphScalar(u8, &hasher, 0),
+        .multiplier => |value| {
+            hashParagraphScalar(u8, &hasher, 1);
+            hashParagraphScalar(u32, &hasher, @bitCast(value));
+        },
+        .absolute_px => |value| {
+            hashParagraphScalar(u8, &hasher, 2);
+            hashParagraphScalar(u32, &hasher, @bitCast(value));
+        },
+    }
+    hashParagraphScalar(u8, &hasher, @intFromEnum(style.wrap));
+    hashParagraphScalar(u8, &hasher, @intFromEnum(style.alignment));
+    hashParagraphScalar(u8, &hasher, @intFromEnum(style.overflow));
+    hashParagraphScalar(u8, &hasher, @intFromBool(style.max_lines != null));
+    if (style.max_lines) |max_lines| {
+        hashParagraphScalar(u32, &hasher, max_lines);
+    }
+
+    var digest: [Sha256.digest_length]u8 = undefined;
+    hasher.final(&digest);
+    return digest;
+}
 
 const PersistentElement = struct {
     element_id: types.ElementId,
@@ -217,6 +327,8 @@ pub const Context = struct {
     transition_states: std.AutoHashMap(u32, TransitionRuntime),
     rollback_transition_states: std.AutoHashMap(u32, TransitionRuntime),
     text_cache_preflight_keys: std.AutoHashMap(text_engine.MeasurementKey, void),
+    paragraph_intrinsic_cache_map: std.AutoHashMap(ParagraphCacheKey, usize),
+    paragraph_layout_cache_map: std.AutoHashMap(ParagraphLayoutKey, usize),
     text_cache: text_engine.Cache,
 
     pointer_info: types.PointerData = .{},
@@ -258,6 +370,14 @@ pub const Context = struct {
             .transition_states = std.AutoHashMap(u32, TransitionRuntime).init(allocator),
             .rollback_transition_states = std.AutoHashMap(u32, TransitionRuntime).init(allocator),
             .text_cache_preflight_keys = std.AutoHashMap(text_engine.MeasurementKey, void).init(allocator),
+            .paragraph_intrinsic_cache_map = std.AutoHashMap(
+                ParagraphCacheKey,
+                usize,
+            ).init(allocator),
+            .paragraph_layout_cache_map = std.AutoHashMap(
+                ParagraphLayoutKey,
+                usize,
+            ).init(allocator),
             .text_cache = text_engine.Cache.initWithLimits(
                 allocator,
                 @max(normalized_options.max_text_cache_word_count / 32, 1),
@@ -273,7 +393,7 @@ pub const Context = struct {
         // use-after-free, so the Clay-compatible void API follows the same
         // callback-time no-op rule as the other configuration mutators.
         if (self.application_callback_phase != .none) return;
-        self.releaseParagraphLayoutsFallible() catch {};
+        self.releaseParagraphLayoutsBestEffort();
         self.nodes.deinit(self.allocator);
         self.child_indices.deinit(self.allocator);
         self.child_buffer.deinit(self.allocator);
@@ -319,6 +439,8 @@ pub const Context = struct {
         self.transition_states.deinit();
         self.rollback_transition_states.deinit();
         self.text_cache_preflight_keys.deinit();
+        self.paragraph_intrinsic_cache_map.deinit();
+        self.paragraph_layout_cache_map.deinit();
         self.text_cache.deinit();
         self.* = undefined;
     }
@@ -335,8 +457,8 @@ pub const Context = struct {
     pub fn setParagraphProvider(self: *Context, provider: ?paragraph_provider.Provider) void {
         if (self.application_callback_phase != .none or self.layout_open) return;
         self.last_paragraph_provider_failure = null;
-        self.releaseParagraphLayoutsFallible() catch {};
-        self.paragraph_intrinsic_cache.clearRetainingCapacity();
+        self.releaseParagraphLayoutsBestEffort();
+        self.clearParagraphIntrinsicCache();
         self.render_commands.clearRetainingCapacity();
         self.paragraph_provider = provider;
     }
@@ -351,34 +473,44 @@ pub const Context = struct {
 
     /// Safely resolve a provider paragraph carried through the existing custom
     /// render-command channel. The command must be borrowed from the current
-    /// Context command array; copied/stale commands and arbitrary application
-    /// custom pointers are never dereferenced or reinterpreted.
+    /// Context command array; copied and unrelated application pointers are
+    /// never dereferenced or reinterpreted. The pointer is invalid after the
+    /// next Context mutation and may then alias newly reused command storage.
     pub fn paragraphRenderData(
         self: *const Context,
         command: *const types.RenderCommand,
     ) ?*const paragraph_provider.RenderData {
-        var current_command = false;
-        for (self.render_commands.items) |*candidate| {
-            if (candidate == command) {
-                current_command = true;
-                break;
-            }
-        }
-        if (!current_command) return null;
-        if (command.command_type != .custom) return null;
-        const custom_pointer = command.render_data.custom.custom_data orelse return null;
-        for (self.paragraph_layout_cache.items) |*entry| {
-            if (@intFromPtr(custom_pointer) == @intFromPtr(&entry.render_data)) {
-                return &entry.render_data;
-            }
-        }
-        return null;
+        const commands = self.render_commands.items;
+        if (commands.len == 0) return null;
+        const command_address = @intFromPtr(command);
+        const first_command_address = @intFromPtr(&commands[0]);
+        if (command_address < first_command_address) return null;
+        const command_offset = command_address - first_command_address;
+        if (command_offset % @sizeOf(types.RenderCommand) != 0) return null;
+        const command_index = command_offset / @sizeOf(types.RenderCommand);
+        if (command_index >= commands.len) return null;
+        const current_command = &commands[command_index];
+        if (current_command.command_type != .custom) return null;
+
+        const custom_pointer = current_command.render_data.custom.custom_data orelse return null;
+        const layouts = self.paragraph_layout_cache.items;
+        if (layouts.len == 0) return null;
+        const custom_address = @intFromPtr(custom_pointer);
+        const first_render_data_address = @intFromPtr(&layouts[0].render_data);
+        if (custom_address < first_render_data_address) return null;
+        const layout_offset = custom_address - first_render_data_address;
+        if (layout_offset % @sizeOf(ParagraphLayoutCacheEntry) != 0) return null;
+        const layout_index = layout_offset / @sizeOf(ParagraphLayoutCacheEntry);
+        if (layout_index >= layouts.len) return null;
+        const render_data = &layouts[layout_index].render_data;
+        if (@intFromPtr(render_data) != custom_address) return null;
+        return render_data;
     }
 
     pub fn resetMeasureTextCache(self: *Context) void {
         if (self.application_callback_phase != .none) return;
-        self.releaseParagraphLayoutsFallible() catch {};
-        self.paragraph_intrinsic_cache.clearRetainingCapacity();
+        self.releaseParagraphLayoutsBestEffort();
+        self.clearParagraphIntrinsicCache();
         self.render_commands.clearRetainingCapacity();
         self.text_cache.reset();
     }
@@ -472,7 +604,7 @@ pub const Context = struct {
         if (self.layout_open) return Error.LayoutAlreadyOpen;
 
         try self.releaseParagraphLayoutsFallible();
-        self.paragraph_intrinsic_cache.clearRetainingCapacity();
+        self.clearParagraphIntrinsicCache();
         try self.snapshotMutableFrameState();
 
         self.pending_debug_mode_enabled = self.debug_mode_enabled;
@@ -1096,50 +1228,22 @@ pub const Context = struct {
             self.generation,
         );
     }
-
-    fn sameParagraphProvider(
-        left: paragraph_provider.Provider,
-        right: paragraph_provider.Provider,
-    ) bool {
-        return left.context == right.context and left.vtable == right.vtable;
-    }
-
-    fn sameParagraphStyle(
-        left: types.TextElementConfig,
-        right: types.TextElementConfig,
-    ) bool {
-        return left.font_id == right.font_id and
-            left.font_size == right.font_size and
-            left.letter_spacing == right.letter_spacing and
-            left.line_height == right.line_height and
-            left.wrap_mode == right.wrap_mode and
-            left.text_alignment == right.text_alignment;
-    }
-
-    fn sameParagraphText(left: types.String, right: types.String) bool {
-        return std.mem.eql(u8, left.asSlice(), right.asSlice());
-    }
-
-    fn sameParagraphWidth(left: f32, right: f32) bool {
-        return @as(u32, @bitCast(left)) == @as(u32, @bitCast(right));
-    }
-
-    fn paragraphProviderContractError(self: *Context) anyerror {
+    fn paragraphProviderContractError(self: *Context) ParagraphProviderError {
         self.emitError(.internal_error, "Paragraph provider violated its request or result contract.");
-        return Error.ParagraphProviderContractViolation;
+        return error.ParagraphProviderContractViolation;
     }
 
     fn paragraphProviderFailureError(
         self: *Context,
         failure: paragraph_provider.Failure,
-    ) anyerror {
+    ) ParagraphProviderError {
         self.last_paragraph_provider_failure = failure;
         self.emitError(.internal_error, "Paragraph provider returned an operational failure.");
         return switch (failure.kind) {
-            .limit_exceeded => Error.TextMeasurementCapacityExceeded,
+            .limit_exceeded => error.TextMeasurementCapacityExceeded,
             .out_of_memory => error.OutOfMemory,
-            .stale_handle => Error.ParagraphProviderStaleHandle,
-            .invalid_style, .unavailable, .internal => Error.ParagraphProviderFailed,
+            .stale_handle => error.ParagraphProviderStaleHandle,
+            .invalid_style, .unavailable, .internal => error.ParagraphProviderFailed,
         };
     }
 
@@ -1147,27 +1251,25 @@ pub const Context = struct {
         self: *Context,
         provider: paragraph_provider.Provider,
         value: types.String,
-        config: types.TextElementConfig,
-    ) !paragraph_provider.IntrinsicMetrics {
-        for (self.paragraph_intrinsic_cache.items) |entry| {
-            if (sameParagraphProvider(entry.provider, provider) and
-                sameParagraphStyle(entry.config, config) and
-                sameParagraphText(entry.text, value))
-            {
-                return entry.metrics;
-            }
+        text_style: paragraph_provider.TextStyle,
+    ) ParagraphProviderError!paragraph_provider.IntrinsicMetrics {
+        const key = ParagraphCacheKey.init(provider, value, text_style);
+        if (self.paragraph_intrinsic_cache_map.get(key)) |index| {
+            std.debug.assert(index < self.paragraph_intrinsic_cache.items.len);
+            return self.paragraph_intrinsic_cache.items[index].metrics;
         }
 
         try self.paragraph_intrinsic_cache.ensureTotalCapacity(
             self.allocator,
             self.paragraph_intrinsic_cache.items.len + 1,
         );
+        try self.paragraph_intrinsic_cache_map.ensureUnusedCapacity(1);
         var scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer scratch.deinit();
         self.beginApplicationCallback(.paragraph_provider);
         const outcome = provider.measureIntrinsic(scratch.allocator(), .{
             .text = value.asSlice(),
-            .text_style = paragraph_provider.TextStyle.fromLegacy(config),
+            .text_style = text_style,
         }) catch {
             self.endApplicationCallback();
             return self.paragraphProviderContractError();
@@ -1177,12 +1279,9 @@ pub const Context = struct {
             .value => |metrics| metrics,
             .failure => |failure| return self.paragraphProviderFailureError(failure),
         };
-        self.paragraph_intrinsic_cache.appendAssumeCapacity(.{
-            .provider = provider,
-            .text = value,
-            .config = config,
-            .metrics = measured,
-        });
+        const index = self.paragraph_intrinsic_cache.items.len;
+        self.paragraph_intrinsic_cache.appendAssumeCapacity(.{ .metrics = measured });
+        self.paragraph_intrinsic_cache_map.putAssumeCapacityNoClobber(key, index);
         return measured;
     }
 
@@ -1190,29 +1289,30 @@ pub const Context = struct {
         self: *Context,
         provider: paragraph_provider.Provider,
         record: *const TextRecord,
-        config: types.TextElementConfig,
         available_width_px: f32,
-    ) !usize {
-        for (self.paragraph_layout_cache.items, 0..) |entry, index| {
-            if (sameParagraphProvider(entry.provider, provider) and
-                sameParagraphStyle(entry.config, config) and
-                sameParagraphText(entry.text, record.text) and
-                sameParagraphWidth(entry.render_data.available_width_px, available_width_px))
-            {
-                return index;
-            }
+    ) ParagraphProviderError!usize {
+        const key = ParagraphLayoutKey.init(
+            provider,
+            record.text,
+            record.paragraph_style,
+            available_width_px,
+        );
+        if (self.paragraph_layout_cache_map.get(key)) |index| {
+            std.debug.assert(index < self.paragraph_layout_cache.items.len);
+            return index;
         }
 
         try self.paragraph_layout_cache.ensureTotalCapacity(
             self.allocator,
             self.paragraph_layout_cache.items.len + 1,
         );
+        try self.paragraph_layout_cache_map.ensureUnusedCapacity(1);
         var scratch = std.heap.ArenaAllocator.init(self.allocator);
         defer scratch.deinit();
         self.beginApplicationCallback(.paragraph_provider);
         const outcome = provider.layoutParagraph(scratch.allocator(), .{
             .text = record.text.asSlice(),
-            .text_style = paragraph_provider.TextStyle.fromLegacy(config),
+            .text_style = record.paragraph_style,
             .available_width_px = available_width_px,
         }) catch {
             self.endApplicationCallback();
@@ -1226,17 +1326,16 @@ pub const Context = struct {
         const index = self.paragraph_layout_cache.items.len;
         self.paragraph_layout_cache.appendAssumeCapacity(.{
             .provider = provider,
-            .text = record.text,
-            .config = config,
             .render_data = .{
                 .lease = lease,
                 .available_width_px = available_width_px,
             },
         });
+        self.paragraph_layout_cache_map.putAssumeCapacityNoClobber(key, index);
         return index;
     }
 
-    fn releaseParagraphLayoutsFallible(self: *Context) !void {
+    fn releaseParagraphLayoutsFallible(self: *Context) ParagraphProviderError!void {
         var first_failure: ?paragraph_provider.Failure = null;
         var contract_failed = false;
         for (self.paragraph_layout_cache.items) |entry| {
@@ -1255,8 +1354,25 @@ pub const Context = struct {
             }
         }
         self.paragraph_layout_cache.clearRetainingCapacity();
+        self.paragraph_layout_cache_map.clearRetainingCapacity();
         if (contract_failed) return self.paragraphProviderContractError();
         if (first_failure) |failure| return self.paragraphProviderFailureError(failure);
+    }
+
+    fn releaseParagraphLayoutsBestEffort(self: *Context) void {
+        self.releaseParagraphLayoutsFallible() catch |release_error| switch (release_error) {
+            error.ParagraphProviderFailed,
+            error.ParagraphProviderContractViolation,
+            error.ParagraphProviderStaleHandle,
+            error.TextMeasurementCapacityExceeded,
+            error.OutOfMemory,
+            => {},
+        };
+    }
+
+    fn clearParagraphIntrinsicCache(self: *Context) void {
+        self.paragraph_intrinsic_cache.clearRetainingCapacity();
+        self.paragraph_intrinsic_cache_map.clearRetainingCapacity();
     }
 
     fn wrapTextGuarded(
@@ -1280,6 +1396,49 @@ pub const Context = struct {
     }
 
     pub fn text(self: *Context, value: types.String, config: types.TextElementConfig) !void {
+        return self.textWithParagraphStyleInternal(
+            value,
+            config,
+            paragraph_provider.TextStyle.fromLegacy(config),
+        );
+    }
+
+    /// Declare text with provider-native typography. This is the escape hatch
+    /// for shaping features that the Clay-compatible config cannot represent.
+    /// A paragraph provider must be installed before calling this method.
+    pub fn textWithParagraphStyle(
+        self: *Context,
+        value: types.String,
+        config: types.TextElementConfig,
+        paragraph_style: paragraph_provider.TextStyle,
+    ) !void {
+        if (self.application_callback_phase != .none) return Error.CallbackReentryNotAllowed;
+        if (!self.layout_open) return Error.LayoutNotOpen;
+        if (self.paragraph_provider == null) return Error.ParagraphProviderNotInstalled;
+        return self.textWithParagraphStyleInternal(value, config, paragraph_style);
+    }
+
+    /// The style's language, feature, and variation slices must remain valid
+    /// until `endLayout` completes.
+    pub fn textSliceWithParagraphStyle(
+        self: *Context,
+        value: []const u8,
+        config: types.TextElementConfig,
+        paragraph_style: paragraph_provider.TextStyle,
+    ) !void {
+        return self.textWithParagraphStyle(
+            types.String.fromSlice(value),
+            config,
+            paragraph_style,
+        );
+    }
+
+    fn textWithParagraphStyleInternal(
+        self: *Context,
+        value: types.String,
+        config: types.TextElementConfig,
+        paragraph_style: paragraph_provider.TextStyle,
+    ) !void {
         if (self.application_callback_phase != .none) return Error.CallbackReentryNotAllowed;
         if (!self.layout_open) return Error.LayoutNotOpen;
         if (self.nodes.items.len >= self.options.max_element_count) {
@@ -1308,7 +1467,7 @@ pub const Context = struct {
         var minimum_width: f32 = 0;
         const provider_active = self.paragraph_provider != null;
         if (self.paragraph_provider) |provider| {
-            const measured = try self.measureParagraphGuarded(provider, value, config);
+            const measured = try self.measureParagraphGuarded(provider, value, paragraph_style);
             preferred_dimensions = .{
                 .width = measured.max_content_width,
                 .height = measured.height,
@@ -1336,7 +1495,7 @@ pub const Context = struct {
             }
         }
         // The callback mutates the by-value function parameter in pinned Clay;
-        // that temporary lineHeight controls the initial element height.
+        // that callback-local lineHeight controls the initial element height.
         const final_height: f32 = if (provider_active)
             preferred_dimensions.height
         else if (mutable_config.line_height > 0)
@@ -1346,6 +1505,7 @@ pub const Context = struct {
         self.texts.appendAssumeCapacity(.{
             .text = value,
             .config = config,
+            .paragraph_style = paragraph_style,
             .preferred_dimensions = preferred_dimensions,
             .min_width = minimum_width,
         });
@@ -1814,7 +1974,11 @@ pub const Context = struct {
         try self.closeElement();
     }
 
-    fn emitDebugSelectedPane(self: *Context, selected_index: usize) !void {
+    fn emitDebugSelectedPane(
+        self: *Context,
+        selected_index: usize,
+        details_height: f32,
+    ) !void {
         const selected_node = self.nodes.items[selected_index];
         const selected_box = self.debugBoundingBox(selected_node);
         const info = debugTextConfig(false, false);
@@ -1823,7 +1987,7 @@ pub const Context = struct {
         const scroll_offset = self.getScrollOffset();
         try self.configureOpenElement(.{
             .layout = .{
-                .sizing = .{ .width = types.grow(), .height = types.fixed(debug_inspector.details_height) },
+                .sizing = .{ .width = types.grow(), .height = types.fixed(details_height) },
                 .layout_direction = .top_to_bottom,
             },
             .background_color = debug_inspector.color_2,
@@ -2092,13 +2256,13 @@ pub const Context = struct {
         try self.closeElement();
     }
 
-    fn emitDebugWarningsPane(self: *Context) !void {
+    fn emitDebugWarningsPane(self: *Context, details_height: f32) !void {
         const warning_config = debugTextConfig(false, false);
         const warning_id = hashes.string(types.String.literal("Clay__DebugViewWarningsScrollPane"), 0);
         const scroll_offset = self.getScrollOffsetForId(warning_id.id);
         try self.openElementWithId(warning_id, .{
             .layout = .{
-                .sizing = .{ .width = types.grow(), .height = types.fixed(debug_inspector.details_height) },
+                .sizing = .{ .width = types.grow(), .height = types.fixed(details_height) },
                 .child_gap = 6,
                 .layout_direction = .top_to_bottom,
             },
@@ -2154,10 +2318,18 @@ pub const Context = struct {
 
         const scroll_id = hashes.string(types.String.literal("Clay__DebugViewOuterScrollPane"), 0);
         const scroll_offset = self.getScrollOffsetForId(scroll_id.id);
+        const view_width = debug_inspector.effectiveViewWidth(
+            self.layout_dimensions.width,
+            self.debug_view_width,
+        );
+        const details_height = debug_inspector.effectiveDetailsHeight(
+            self.layout_dimensions.height,
+        );
         const highlighted_row = debug_inspector.highlightedRow(.{
             .pointer = self.pointer_info.position,
             .layout_dimensions = self.layout_dimensions,
-            .view_width = self.debug_view_width,
+            .view_width = view_width,
+            .details_pane_height = details_height,
             .scroll_position = scroll_offset,
             .external_scroll_handling_enabled = self.external_scroll_handling_enabled,
         });
@@ -2185,12 +2357,16 @@ pub const Context = struct {
         try self.openElementWithId(hashes.string(types.String.literal("Clay__DebugView"), 0), .{
             .layout = .{
                 .sizing = .{
-                    .width = types.fixed(@floatFromInt(self.debug_view_width)),
+                    .width = types.fixed(view_width),
                     .height = types.fixed(self.layout_dimensions.height),
                 },
                 .layout_direction = .top_to_bottom,
             },
             .floating = .{
+                .offset = .{
+                    .x = self.layout_dimensions.width - view_width -
+                        self.nodes.items[0].dimensions.width,
+                },
                 .z_index = 32765,
                 .attach_points = .{ .element = .left_center, .parent = .right_center },
                 .attach_to = .root,
@@ -2333,9 +2509,9 @@ pub const Context = struct {
         });
         try self.closeElement();
         if (selected_index) |index| {
-            try self.emitDebugSelectedPane(index);
+            try self.emitDebugSelectedPane(index, details_height);
         } else {
-            try self.emitDebugWarningsPane();
+            try self.emitDebugWarningsPane(details_height);
         }
         try self.closeElement();
         return true;
@@ -2346,8 +2522,8 @@ pub const Context = struct {
         if (!self.layout_open) return Error.LayoutNotOpen;
         errdefer {
             self.layout_open = false;
-            self.releaseParagraphLayoutsFallible() catch {};
-            self.paragraph_intrinsic_cache.clearRetainingCapacity();
+            self.releaseParagraphLayoutsBestEffort();
+            self.clearParagraphIntrinsicCache();
             self.render_commands.clearRetainingCapacity();
             self.pending_hit_records.clearRetainingCapacity();
             self.apply_transition_overrides = false;
@@ -2633,6 +2809,20 @@ pub const Context = struct {
         const wrapped_line_bound = self.wrappedLineUpperBound();
         try self.wrapped_lines.ensureTotalCapacity(self.allocator, wrapped_line_bound);
         try self.preflightFinalTextCache();
+        if (self.paragraph_provider != null) {
+            const layout_count_max = std.math.add(
+                usize,
+                self.paragraph_layout_cache.items.len,
+                self.texts.items.len,
+            ) catch return error.OutOfMemory;
+            try self.paragraph_layout_cache.ensureTotalCapacity(
+                self.allocator,
+                layout_count_max,
+            );
+            try self.paragraph_layout_cache_map.ensureUnusedCapacity(
+                @intCast(self.texts.items.len),
+            );
+        }
 
         const command_bound = self.renderCommandUpperBound(wrapped_line_bound);
         const command_capacity = self.renderCommandCapacity();
@@ -2972,7 +3162,6 @@ pub const Context = struct {
                 const layout_index = try self.layoutParagraphGuarded(
                     provider,
                     record,
-                    node.text_config,
                     node.dimensions.width,
                 );
                 record.paragraph_layout_index = layout_index;
@@ -3832,7 +4021,7 @@ pub const Context = struct {
     /// allocation-free value clone, then copy the protected state back over the
     /// original storage before restoring it as the live array. This keeps those
     /// previously borrowed pointers stable outside callbacks while making any
-    /// callback-time writes observationally temporary.
+    /// callback-time writes unobservable after callback return.
     fn beginApplicationCallback(self: *Context, phase: ApplicationCallbackPhase) void {
         std.debug.assert(phase != .none);
         std.debug.assert(self.application_callback_phase == .none);
@@ -4081,6 +4270,8 @@ const ParagraphProviderStateForTest = struct {
     fail_measure: bool = false,
     fail_layout_call: ?usize = null,
     invalid_metrics: bool = false,
+    last_measure_style: paragraph_provider.TextStyle = .{},
+    last_layout_style: paragraph_provider.TextStyle = .{},
     released: [16]paragraph_provider.LeaseKey = undefined,
 
     fn from(context: *anyopaque) *ParagraphProviderStateForTest {
@@ -4094,6 +4285,7 @@ const ParagraphProviderStateForTest = struct {
     ) paragraph_provider.IntrinsicOutcome {
         const self = from(context);
         self.measure_calls += 1;
+        self.last_measure_style = request.text_style;
         const copy = scratch_allocator.dupe(u8, request.text) catch return .{
             .failure = .{ .kind = .out_of_memory, .provider_code = 90 },
         };
@@ -4117,6 +4309,7 @@ const ParagraphProviderStateForTest = struct {
     ) paragraph_provider.LayoutOutcome {
         const self = from(context);
         self.layout_calls += 1;
+        self.last_layout_style = request.text_style;
         if (self.fail_layout_call == self.layout_calls) return .{
             .failure = .{ .kind = .internal, .provider_code = 92 },
         };
@@ -4368,21 +4561,31 @@ test "provider path caches one final-width lease and transports it through custo
     const color = types.Color{ .r = 20, .g = 40, .b = 60, .a = 255 };
     try context.textSlice("مرحبا 世界", .{ .font_id = 9, .font_size = 14, .text_color = color });
     try context.textSlice("مرحبا 世界", .{ .font_id = 9, .font_size = 14, .text_color = color });
+    try context.openElement(.{
+        .layout = .{ .sizing = .{ .width = types.fixed(1), .height = types.fixed(1) } },
+        .custom = .{ .custom_data = &state },
+    });
+    try context.closeElement();
     try context.closeElement();
     const commands = try context.endLayout(0);
 
     try std.testing.expectEqual(@as(usize, 1), state.measure_calls);
     try std.testing.expectEqual(@as(usize, 1), state.layout_calls);
+    try std.testing.expectEqual(@as(usize, 1), context.paragraph_intrinsic_cache_map.count());
+    try std.testing.expectEqual(@as(usize, 1), context.paragraph_layout_cache_map.count());
     try std.testing.expectEqual(@as(usize, 0), state.release_calls);
-    try std.testing.expectEqual(@as(usize, 2), commands.items().len);
+    try std.testing.expectEqual(@as(usize, 3), commands.items().len);
     const first = &commands.items()[0];
     const second = &commands.items()[1];
+    const unrelated = &commands.items()[2];
     try std.testing.expectEqual(types.RenderCommandType.custom, first.command_type);
     try std.testing.expectEqual(color, first.render_data.custom.background_color);
     const first_data = context.paragraphRenderData(first) orelse return error.TestUnexpectedResult;
     const second_data = context.paragraphRenderData(second) orelse return error.TestUnexpectedResult;
     var copied_command = first.*;
     try std.testing.expect(context.paragraphRenderData(&copied_command) == null);
+    try std.testing.expectEqual(types.RenderCommandType.custom, unrelated.command_type);
+    try std.testing.expect(context.paragraphRenderData(unrelated) == null);
     try std.testing.expectEqual(first_data, second_data);
     try std.testing.expectEqual(@as(u64, 41), @intFromEnum(first_data.lease.handle));
     try std.testing.expectEqual(@as(u64, 7), first_data.lease.generation);
@@ -4392,6 +4595,8 @@ test "provider path caches one final-width lease and transports it through custo
 
     try context.beginLayout();
     try std.testing.expectEqual(@as(usize, 1), state.release_calls);
+    try std.testing.expectEqual(@as(usize, 0), context.paragraph_intrinsic_cache_map.count());
+    try std.testing.expectEqual(@as(usize, 0), context.paragraph_layout_cache_map.count());
     try std.testing.expect(context.paragraphRenderData(first) == null);
     _ = try context.endLayout(0);
 }
@@ -4421,6 +4626,81 @@ test "provider reset and replacement release generation-bound commands" {
     try std.testing.expectEqual(@as(usize, 2), state.release_calls);
     try std.testing.expectEqual(@as(u64, 8), state.released[1].generation);
     try std.testing.expect(context.paragraphRenderData(command) == null);
+}
+
+test "advanced paragraph style reaches both provider passes" {
+    const features = [_]paragraph_provider.OpenTypeFeature{.{
+        .tag = paragraph_provider.Tag.fromBytes("kern".*),
+        .value = 0,
+        .byte_start = 0,
+        .byte_end = 6,
+    }};
+    const variations = [_]paragraph_provider.VariationAxis{.{
+        .tag = paragraph_provider.Tag.fromBytes("wght".*),
+        .value = 612.5,
+    }};
+    const heavier_variations = [_]paragraph_provider.VariationAxis{.{
+        .tag = paragraph_provider.Tag.fromBytes("wght".*),
+        .value = 700,
+    }};
+    const paragraph_style = paragraph_provider.TextStyle{
+        .font_stack_id = 0xfedc_ba98,
+        .size_px = 17.25,
+        .direction = .right_to_left,
+        .script = paragraph_provider.Tag.fromBytes("Arab".*),
+        .language = "ar-EG",
+        .features = &features,
+        .variations = &variations,
+        .letter_spacing_px = -1.375,
+        .word_spacing_px = 0.625,
+        .line_height = .{ .multiplier = 1.35 },
+        .wrap = .grapheme,
+        .alignment = .end,
+        .overflow = .ellipsis,
+        .max_lines = 3,
+    };
+    var state = ParagraphProviderStateForTest{};
+    var context = Context.init(std.testing.allocator, .{ .width = 100, .height = 100 }, .{});
+    defer context.deinit();
+    context.setParagraphProvider(.{ .context = &state, .vtable = &paragraph_provider_vtable_for_test });
+
+    try context.beginLayout();
+    try context.textSliceWithParagraphStyle("مرحبا", .{}, paragraph_style);
+    try context.textSliceWithParagraphStyle("مرحبا", .{}, paragraph_style);
+    var heavier_style = paragraph_style;
+    heavier_style.variations = &heavier_variations;
+    try context.textSliceWithParagraphStyle("مرحبا", .{}, heavier_style);
+    const commands = try context.endLayout(0);
+
+    try std.testing.expectEqual(@as(usize, 2), state.measure_calls);
+    try std.testing.expectEqual(@as(usize, 2), state.layout_calls);
+    try std.testing.expectEqual(heavier_style.font_stack_id, state.last_measure_style.font_stack_id);
+    try std.testing.expectEqual(heavier_style.direction, state.last_layout_style.direction);
+    try std.testing.expectEqualStrings("ar-EG", state.last_layout_style.language);
+    try std.testing.expectEqual(@as(f32, -1.375), state.last_measure_style.letter_spacing_px);
+    try std.testing.expectEqual(heavier_style.features[0], state.last_layout_style.features[0]);
+    try std.testing.expectEqual(heavier_style.variations[0], state.last_layout_style.variations[0]);
+    try std.testing.expectEqual(types.RenderCommandType.custom, commands.items()[0].command_type);
+    const first = context.paragraphRenderData(&commands.items()[0]) orelse
+        return error.TestUnexpectedResult;
+    const duplicate = context.paragraphRenderData(&commands.items()[1]) orelse
+        return error.TestUnexpectedResult;
+    const heavier = context.paragraphRenderData(&commands.items()[2]) orelse
+        return error.TestUnexpectedResult;
+    try std.testing.expectEqual(first, duplicate);
+    try std.testing.expect(first != heavier);
+}
+
+test "advanced paragraph style requires an installed provider" {
+    var context = Context.init(std.testing.allocator, .{ .width = 100, .height = 100 }, .{});
+    defer context.deinit();
+
+    try context.beginLayout();
+    try std.testing.expectError(
+        Error.ParagraphProviderNotInstalled,
+        context.textSliceWithParagraphStyle("text", .{}, .{}),
+    );
+    _ = try context.endLayout(0);
 }
 
 test "provider failure never mixes legacy wrapping and releases earlier leases" {

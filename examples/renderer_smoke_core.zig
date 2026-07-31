@@ -54,11 +54,15 @@ const SmokeBackend = struct {
         try self.note(command, .image);
     }
 
-    pub fn custom(self: *SmokeBackend, command: zlay.RenderCommand, data: zlay.CustomRenderData) !void {
+    pub fn custom(
+        self: *SmokeBackend,
+        command: *const zlay.RenderCommand,
+        data: zlay.CustomRenderData,
+    ) !void {
         if (data.custom_data == null or @intFromPtr(data.custom_data.?) != @intFromPtr(self.custom_token)) {
             return error.InvalidFrame;
         }
-        try self.note(command, .custom);
+        try self.note(command.*, .custom);
     }
 
     pub fn scissorStart(self: *SmokeBackend, command: zlay.RenderCommand, data: zlay.ClipRenderData) !void {

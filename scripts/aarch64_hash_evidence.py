@@ -1225,15 +1225,12 @@ def write_atomic_bytes_new(path: Path, data: bytes) -> str:
         if linked:
             try:
                 path.unlink()
-            except OSError:
+            except OSError:  # craft-ignore: Preserve the original durability error.
                 pass
         raise EvidenceError(f"cannot durably create evidence {path}: {error}") from error
     finally:
         if temporary_name is not None:
-            try:
-                os.unlink(temporary_name)
-            except FileNotFoundError:
-                pass
+            Path(temporary_name).unlink(missing_ok=True)
     return _sha256_bytes(data)
 
 
@@ -1274,10 +1271,7 @@ def write_atomic_replacing(path: Path, value: Any) -> str:
         raise EvidenceError(f"cannot atomically replace source snapshot {path}: {error}") from error
     finally:
         if temporary_name is not None:
-            try:
-                os.unlink(temporary_name)
-            except FileNotFoundError:
-                pass
+            Path(temporary_name).unlink(missing_ok=True)
     return _sha256_bytes(data)
 
 

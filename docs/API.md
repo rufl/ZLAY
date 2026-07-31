@@ -72,8 +72,8 @@ defer context.deinit();
 `CannotCloseRoot`, `CannotConfigureRoot`, `ElementAlreadyConfigured`,
 `ScopedElementUnbalanced`, `PointerUpdateAlreadyActive`,
 `CallbackReentryNotAllowed`, `ElementCapacityExceeded`,
-`TextMeasurementCapacityExceeded`, `DebugStringCapacityExceeded`, and
-`RenderCommandCapacityExceeded`. Public fallible operations may also return
+`TextMeasurementCapacityExceeded`, `DebugStringCapacityExceeded`,
+`RenderCommandCapacityExceeded`, and `ParagraphProviderNotInstalled`. Public fallible operations may also return
 allocator errors such as `error.OutOfMemory`. A missing measurement callback is
 reported through the diagnostic handler and produces zero preferred text
 dimensions; it does not fail `Context.text`. Render-command exhaustion emits a
@@ -94,8 +94,9 @@ Configuration methods:
 | --- | --- |
 | `setMeasureTextFunction(function, user_data)` | Install or clear the font/text measurement callback. Required for meaningful text dimensions. |
 | `setParagraphProvider(provider)` / `getParagraphProvider()` | Store/query one context-local optional generic paragraph provider. `null` preserves the complete legacy path. Replacement is ignored during an open layout; otherwise it releases outstanding provider leases and invalidates prior commands. |
+| `textWithParagraphStyle(value, config, style)` / `textSliceWithParagraphStyle(value, config, style)` | Declare provider-backed text with advanced shaping and typography fields. Fails with `ParagraphProviderNotInstalled` when no provider is installed. |
 | `getLastParagraphProviderFailure()` | Return the last stable provider failure class/code, if an operational callback failed. |
-| `paragraphRenderData(&command)` | Resolve typed provider data only for a command borrowed from the current context command array. Copied, stale, and unrelated custom commands return `null`. |
+| `paragraphRenderData(&command)` | Resolve typed provider data in constant time only for a command borrowed from the current context command array. Copied and unrelated custom commands return `null`; the pointer expires on the next Context mutation. |
 | `resetMeasureTextCache()` | Recycle cached text measurements and release/invalidate provider paragraph commands. Call after font metrics change. |
 | `setQueryScrollOffsetFunction(function, user_data)` | Install the application callback used by external scrolling. |
 | `setLayoutDimensions(dimensions)` / `getLayoutDimensions()` | Update/query the synthetic root size. Set dimensions before `beginLayout`. |
@@ -129,6 +130,12 @@ inspector width and `endLayout` appends the inspector as high-z floating roots.
 The returned command stream therefore includes its backgrounds, text, borders,
 scissors, row highlights, configuration/warning pane, and hovered-element
 overlay.
+
+The configured width is an upper bound. If the viewport is narrower, the
+inspector becomes viewport-wide instead of producing negative content width or
+overflowing past the right edge. Short viewports shrink the lower details pane
+and preserve room for the header and element list. Ordinary 400-by-300 inspector
+geometry remains unchanged when the viewport has enough space.
 
 The inspector uses the application's measurement callback with font ID zero.
 Pointer hit testing still consumes the prior completed frame: call
@@ -169,11 +176,15 @@ Successful layouts own one lease in the frame cache. ZLAY emits one existing
 legacy text paint color, while `paragraphRenderData` safely resolves the opaque
 payload to the exact lease and available width. Commands and the resolved data
 are borrowed only until the next frame mutation/reset/provider replacement.
-Every owned cache entry is released exactly once on those boundaries, on frame
-failure, or during `deinit`. Style differences and exact final widths create
+Expired pointers must not be reused because later command storage may occupy the
+same address. Every owned cache entry is released exactly once on those
+boundaries, on frame failure, or during `deinit`. Style differences and exact final widths create
 distinct entries; duplicate keys share one live lease. Stable operational
 failure classes map into ZLAY's fallible layout surface without silently mixing
 provider measurement with legacy wrapping.
+If a renderer queues work beyond command consumption, it must call
+`ParagraphProvider.retainParagraph` before the frame lease expires and pair it
+with exactly one `releaseParagraph` after the queued work completes.
 
 `ParagraphTextStyle` carries provider-facing typography without narrowing:
 32-bit font-stack identity, float size, signed/fractional letter and word
@@ -181,7 +192,34 @@ spacing, direction, script, borrowed language, features, variations, advanced
 line height, wrap, physical/logical alignment, overflow, and line limit.
 `fromLegacy(TextElementConfig)` widens the legacy unsigned fields exactly,
 preserves physical alignment, and maps the pinned implementation's equivalent
-hard-break-only `.newlines`/`.none` behavior to provider `.none`.
+hard-break-only `.newlines`/`.none` behavior to provider `.none`. The explicit
+`Context.textWithParagraphStyle` path carries this model directly; `Context.text`
+remains the lossless legacy bridge.
+
+The checked renderer passes `.custom` methods the original borrowed command
+pointer so paragraph identity remains resolvable:
+
+```zig
+pub fn custom(
+    self: *Backend,
+    command: *const zlay.RenderCommand,
+    data: zlay.CustomRenderData,
+) !void {
+    if (self.context.paragraphRenderData(command)) |paragraph| {
+        try self.fonts.drawParagraph(
+            paragraph.lease.handle,
+            command.bounding_box,
+            data.background_color,
+        );
+        return;
+    }
+    try self.drawApplicationCustom(command.*, data);
+}
+```
+
+The provider owns glyph runs, atlas references, and shaping data behind the
+handle. ZLAY supplies placement, clipping, paint color, lease lifetime, and the
+exact final layout width without choosing a font library.
 
 ### Fixed-buffer profiling
 
@@ -432,10 +470,12 @@ const stats = try zlay.renderer.consumeArray(MyBackend, &backend, commands);
 `MyBackend` supplies one public method for each `RenderCommandType`: `none`,
 `rectangle`, `border`, `text`, `image`, `custom`, `scissorStart`, `scissorEnd`,
 `overlayColorStart`, and `overlayColorEnd`. Payload-bearing methods receive only
-the active `RenderData` field. (`pub fn` is required when the backend is declared
-outside `renderer.zig`.) `Stats` returns per-kind counts and maximum scope
-depth. The adapter dispatches commands; application code still performs actual
-graphics, font, image, and custom rendering.
+the active `RenderData` field. `custom` receives `*const RenderCommand` rather
+than a copy so context-owned paragraph payloads can be resolved safely; the
+other methods receive commands by value. (`pub fn` is required when the backend
+is declared outside `renderer.zig`.) `Stats` returns per-kind counts and maximum
+scope depth. The adapter dispatches commands; application code still performs
+actual graphics, font, image, and custom rendering.
 
 ## Errors and diagnostics
 
@@ -452,7 +492,8 @@ frame completion stages hit and exit-snapshot data and reserves persistent-map
 commit storage before publishing any of those surfaces.
 
 Paragraph providers additionally surface `ParagraphProviderFailed`,
-`ParagraphProviderContractViolation`, and `ParagraphProviderStaleHandle`.
+`ParagraphProviderContractViolation`, `ParagraphProviderStaleHandle`, and
+`ParagraphProviderNotInstalled`.
 Limit failures use `TextMeasurementCapacityExceeded`, and provider allocation
 failure uses `OutOfMemory`. The diagnostic callback receives an
 `internal_error` summary; `getLastParagraphProviderFailure` retains the stable

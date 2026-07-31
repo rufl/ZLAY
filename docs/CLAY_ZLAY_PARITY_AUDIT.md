@@ -2,7 +2,7 @@
 
 Audit date: 2026-07-13  
 Evidence-workflow refresh: 2026-07-14  
-Supplemental AArch64 emulation refresh: 2026-07-14  
+Supplemental AArch64 emulation refresh: 2026-07-31
 Text-cache topology refresh: 2026-07-15  
 Accountable source-coverage refresh: 2026-07-15  
 Normative source: Nic Barker's `clay.h` at commit
@@ -39,10 +39,12 @@ Debug `aarch64-linux-musl` root tests, manifest tests, and the exact C/Zig trace
 with `qemu-aarch64 -cpu max`; its bound report and host-only mutation audit mark
 all certification, physical-machine-proof, and backlog-closure flags false.
 That supplemental emulator result is isolated from the physical evidence and
-review workflows.
+review workflows. The current-source refresh passes 205/206 module tests with
+the one exact x86-only skip, 4/4 manifest tests, and the unchanged 18-line /
+426-byte trace under QEMU 11.0.3.
 No real imported raw record, runner record, completed certification log, or
 receipt exists. That externally blocked evidence requirement is the sole open
-backlog row, not a known host implementation gap.
+parity row, not a known host implementation gap.
 
 “1:1” in this project means the same observable values, layout, command order,
 callback timing, diagnostics, and state transitions for the pinned source. It
@@ -202,7 +204,7 @@ remain the behavioral authority.
 The original audit additions closed ZL-116, ZL-119, and ZL-121; the 2026-07-15
 accountability and ownership refresh closes ZL-215. The maintained production-
 C-free gate rejects `@cImport`, C ABI declarations, and C build hooks. A
-separate repository scan found no TODO, FIXME, stub, placeholder, or
+separate repository scan found no unresolved implementation markers, stubs, placeholders, or
 unimplemented marker under `src/`; the pinned C header exists only under the
 oracle/provenance boundary.
 

@@ -1,41 +1,51 @@
 # ZLAY
 
 ZLAY is a renderer-agnostic, native Zig port of Nic Barker's
-[Clay](https://github.com/nicbarker/clay). Production code is Zig-only: it does
-not import or link the C implementation. The public package implements the
-core layout engine, retained interaction state, scrolling, transitions,
-renderer-neutral command generation, a checked renderer dispatcher, fixed-buffer
-profiling, and a native built-in inspector. The implementation map covers the
-entire pinned header. The audited host parity contract is closed on x86-64: all
-public declarations are mapped, all 25 ordinary traces are byte-identical and
-bit-exact, every intentional observable behavioral difference has a reviewed
-executable contract, and structural allocator/context/ABI divergences are
-explicitly bounded. A fail-closed coverage certifier additionally accounts for
-every executable line, source-level function, and source branch direction in
-the pinned header's host Clang/C99 scalar/common profile and native x86-64 SIMD
-supplement: ordinary paths execute, while the small non-executed remainder
-requires an exact reviewed source disposition.
-Raw coverage remains reported separately and is not mislabeled as behavioral
-equivalence. Within the project's recorded x86-64/AArch64 parity scope,
-cross-target closure remains externally blocked because no qualifying physical
-AArch64 runner and resulting artifact set are available. Other OS, browser, and
-graphics-backend matrices remain outside the core proof.
+[Clay](https://github.com/nicbarker/clay). Production code is Zig-only,
+dependency-free, and never imports or links the C implementation. It provides
+layout, interaction state, scrolling, transitions, renderer-neutral commands,
+a checked renderer dispatcher, fixed-buffer profiling, and the built-in
+inspector.
+
+## Status at a glance
+
+| Surface | Status |
+|---|---|
+| Native x86-64 parity | Closed: all pinned public declarations are mapped, 25 ordinary traces are byte-identical and bit-exact, and reviewed divergences have executable contracts. |
+| Pinned-source accountability | Closed for the host scalar/common profile and native x86-64 SIMD supplement through fail-closed line, function, and branch-direction accounting. |
+| Physical AArch64 certification | Externally blocked: no qualifying runner or resulting artifact set is available in this checkout. |
+| Rendering and fonts | Application-owned by design; ZLAY emits commands and optional paragraph leases but does not rasterize. |
+| Maintained aggregate gate | `zig build verify-all` on Zig 0.16.0. |
+| First release support scope | Verified native x86-64 Linux plus the maintained `wasm32-freestanding` compile and Node runtime smoke; AArch64 remains explicitly uncertified. |
+
+Raw coverage remains separate from behavioral equivalence. Other OS, browser,
+graphics-backend, and visual-output matrices remain outside the core proof.
 
 The implementation is pinned to Clay commit
 [`e6cc36941ab2af5d81107617039d6f527a1c660b`](https://github.com/nicbarker/clay/tree/e6cc36941ab2af5d81107617039d6f527a1c660b).
 See [the upstream record](docs/UPSTREAM.md) and
 [the parity contract](docs/PARITY.md) for the exact source boundary and proof
-standard.
+standard. Maintainers preparing a tag should follow the bounded
+[release procedure](docs/RELEASE.md).
+
+## UI and visual-output boundary
+
+ZLAY owns layout and interaction behavior, not pixels. End-to-end visual UX is
+therefore completed in the consuming renderer, font system, assets, and input
+adapter. The library side supplies deterministic command order, clipping,
+responsive sizing, pointer state, advanced paragraph transport, explicit
+lifetimes, and checked failures so a backend can render that experience without
+guessing at hidden state. No visual redesign is meaningful inside ZLAY without
+choosing a concrete backend.
 
 ## Requirements and dependency setup
 
 ZLAY currently requires Zig 0.16.0. Python 3.10 or newer is required by
 repository audit, evidence, and review gates. Full repository verification also
-requires Bash, Clang, `llvm-profdata`, `llvm-cov`, and ripgrep (`rg`). Node.js is
-required only for actual freestanding-WebAssembly execution. `qemu-aarch64` is
-optional contributor tooling for the supplemental AArch64 user-mode execution
-lane. Library users do not need either runtime, and `zig build check` needs
-neither Node.js nor QEMU.
+requires Bash, Clang, `llvm-profdata`, `llvm-cov`, and ripgrep (`rg`). Node.js is required by `zig build check` for the freestanding-WebAssembly
+runtime smoke. `qemu-aarch64` is optional contributor tooling for the
+supplemental AArch64 user-mode execution lane. Library users need neither
+runtime.
 Until the package has a published source URL, add it as a path dependency in the
 consumer's `build.zig.zon`:
 
@@ -132,14 +142,19 @@ text/style/width cache key without invoking the legacy measurement callback.
 32-bit font-stack ID, float size, signed/fractional letter and word spacing,
 script/language/direction, OpenType features and variations, advanced line
 height, word/grapheme/no wrapping, physical or logical alignment, overflow,
-and line limits. `ParagraphTextStyle.fromLegacy` widens legacy values exactly;
-advanced values are never narrowed through `TextElementConfig`.
+and line limits. `ParagraphTextStyle.fromLegacy` widens legacy values exactly. Use
+`Context.textWithParagraphStyle` or `Context.textSliceWithParagraphStyle` for
+direct advanced per-element styles; these methods fail closed unless a
+paragraph provider is installed.
 
 Provider paragraphs emit one existing `custom` render command. Call
 `Context.paragraphRenderData(&command)` with a command borrowed from the current
-array to resolve its typed `ParagraphRenderData`; copied, stale, and unrelated
-custom commands are rejected without interpreting their opaque pointers. The
-lease remains live through command consumption and is released exactly once on
+array to resolve its typed `ParagraphRenderData`; copied and unrelated custom
+commands are rejected without interpreting their opaque pointers. The command
+pointer expires on the next Context mutation and may then alias reused storage.
+The checked `renderer.consume`/`consumeArray` adapter preserves identity by
+passing `.custom` backends the original `*const RenderCommand`. The lease
+remains live through command consumption and is released exactly once on
 the next frame, cache reset, provider replacement, failed frame, or context
 destruction. Operational failures abort the provider path instead of mixing its
 metrics with legacy wrapping. This proves the generic ZLAY integration seam,
@@ -268,8 +283,8 @@ is a workload profiler, not a `Clay_MinMemorySize` equivalent.
 
 ## Verification and current limits
 
-The 2026-07-19 refresh reran the C-free `zig build check --summary all` gate:
-26/26 steps and 205/205 combined tests pass on Zig 0.16.0. No source-owned
+The 2026-07-31 refresh reran the C-free `zig build check --summary all` gate:
+26/26 steps and 210/210 combined tests pass on Zig 0.16.0. No source-owned
 backlog row is actionable; ZL-202 still requires evidence from physical,
 non-emulated AArch64 hardware and must not be closed by local code or QEMU.
 
@@ -334,6 +349,13 @@ artifacts, and trace identity, and always ends with
 host. This optional rung is entirely outside raw-v1 capture, runner provenance,
 repository import, human review, and certification; it cannot close ZL-202 or
 replace execution on physical non-emulated AArch64 hardware.
+
+The 2026-07-31 current-source refresh passes 16/16 QEMU lane steps, 205/206
+module tests with the one exact x86-only skip, 4/4 manifest tests, and the
+unchanged 18-line / 426-byte trace SHA-256
+`68b1ce5dfef146735d34889f337fa3f73a597b0511a5fc511f9e399d263dc787`.
+The complete non-certifying identity record is retained in
+`.overzeer/aarch64-qemu-smoke.md`.
 
 The bounded ZL-202 workflow is:
 
@@ -550,7 +572,8 @@ boundaries are:
   on undefined out-of-range float-to-integer conversions in transition and
   inspector edges. ZLAY suppresses invalid momentum, bounds border widths,
   normalizes Context transition deltas and stored scroll state, rejects invalid
-  inspector rows, and prevents invalid layout distribution from spinning.
+  inspector rows, prevents invalid layout distribution from spinning, and
+  keeps the inspector panes within narrow or short viewports.
 - Pinned Clay can leak a clip-stack entry when one element is both floating and
   clipping, can leave deeply unbalanced declaration stacks malformed, and can
   form a negative-length wrapped slice. ZLAY keeps safe behavior; exact

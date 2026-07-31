@@ -29,7 +29,11 @@ const Backend = struct {
         try self.record();
     }
 
-    pub fn custom(self: *Backend, _: zlay.RenderCommand, _: zlay.CustomRenderData) !void {
+    pub fn custom(
+        self: *Backend,
+        _: *const zlay.RenderCommand,
+        _: zlay.CustomRenderData,
+    ) !void {
         try self.record();
     }
 

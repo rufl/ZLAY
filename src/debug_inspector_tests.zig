@@ -140,6 +140,38 @@ test "live inspector selects highlights collapses and closes across frames" {
     try std.testing.expect(!context.getElementData(panel_id).found);
 }
 
+test "live inspector clamps its panes to a narrow viewport" {
+    var context = zlay.Context.init(
+        std.testing.allocator,
+        .{ .width = 240, .height = 180 },
+        .{},
+    );
+    defer context.deinit();
+    context.setMeasureTextFunction(measureText, null);
+    context.setDebugModeEnabled(true);
+
+    try renderUserTree(
+        &context,
+        context.id("narrow-parent"),
+        context.id("narrow-child"),
+    );
+
+    try expectBoxEqual(
+        .{ .x = 0, .y = 0, .width = 240, .height = 180 },
+        context.getElementData(context.id("Clay__DebugView")).bounding_box,
+    );
+    try std.testing.expectEqual(
+        @as(f32, 118),
+        context.getElementData(context.id("Clay__DebugViewWarningsScrollPane")).bounding_box.height,
+    );
+
+    var command_index: i32 = 0;
+    while (context.renderCommand(command_index)) |command| : (command_index += 1) {
+        try std.testing.expect(command.bounding_box.width >= 0);
+        try std.testing.expect(command.bounding_box.height >= 0);
+    }
+}
+
 test "rejected inspector frames commit no selection collapse or close interaction" {
     const render_capacity: usize = 512;
     var context = zlay.Context.init(std.testing.allocator, .{ .width = 1000, .height = 600 }, .{

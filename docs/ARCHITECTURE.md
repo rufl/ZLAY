@@ -20,7 +20,7 @@ sources do not compile or call that header.
 | `src/geometry.zig` | Pure clipping, intersection, floating attachment, child placement, and content-geometry helpers. |
 | `src/layout.zig` | Internal node model, checked public intrinsic/sizing helpers, two-axis sizing/compression, aspect propagation support, and stable root z sorting. |
 | `src/text.zig` | Allocator-owned measurement cache with collision-resistant content/configuration identity, measured-word storage, wrapping, newline handling, and line alignment. It borrows application text and calls the application font measurer. |
-| `src/paragraph_provider.zig` | Generic context-local optional provider declarations plus a lossless advanced typography/paragraph style bridge; provider callbacks remain inactive until width-time integration. |
+| `src/paragraph_provider.zig` | Generic context-local provider declarations, advanced typography types, validated layout leases, and typed render transport. |
 | `src/scroll.zig` | Persistent clip-container state, nested priority, wheel/drag updates, momentum, clamping, and stale-container pruning. |
 | `src/transition.zig` | Pure transition interpolation, changed-property detection, property application, and the cubic ease-out callback. |
 | `src/debug.zig` | Inspector constants, labels, logical row traversal, hover-row math, collapse/close decoding, and presentation helpers. |
@@ -74,14 +74,17 @@ callback state.
 The optional paragraph provider is a native addition, not part of the pinned
 Clay parity surface. Its `null` default leaves the legacy measurement, cache,
 wrapping, and render-command flow unchanged. `ParagraphTextStyle` preserves
-advanced values independently of Clay's unsigned configuration. When installed,
-one coherent path uses provider intrinsic metrics and an exact text/style/final-
-width cache. Each successful cache miss owns one generation-bound lease, and
+advanced values independently of Clay's unsigned configuration. The legacy
+`Context.text` path constructs it through `fromLegacy`; the explicit
+`Context.textWithParagraphStyle` path carries advanced typography directly.
+When installed, one coherent path uses provider intrinsic metrics and an exact
+text/style/final-width cache. Each successful cache miss owns one generation-bound lease, and
 duplicate keys share it. Existing `custom` commands transport typed lease data
 without changing Clay's public `TextRenderData`, `RenderData`, or command-kind
-layout; a Context resolver validates current-array command identity before
-returning the typed payload. Frame start, reset, provider replacement, failure,
-and destruction release every owned entry exactly once.
+layout; a Context resolver validates exact current-array command and cache-entry
+addresses in constant time before returning the typed payload. Frame start,
+reset, provider replacement, failure, and destruction release every owned entry
+exactly once.
 
 ## Frame pipeline
 
@@ -89,8 +92,9 @@ and destruction release every owned entry exactly once.
    input. Pointer hit testing uses the previous completed frame.
 2. `beginLayout` snapshots persistent scroll/transition state, increments the
    generation, resets frame lengths, and opens a fixed-size synthetic root.
-   Debug mode subtracts the configured inspector width, 400 pixels by default,
-   from that root.
+   Debug mode subtracts up to the configured inspector width, 400 pixels by
+   default, from that root. Narrow viewports clamp the inspector to the
+   available width instead of creating negative root sizing.
 3. Combined `openElement*` calls, scoped `element*` wrappers, or the split
    `openElement*Unconfigured`/`configureOpenElement` primitives build a flat
    node array plus child-index ranges. The split form preserves Clay macro
@@ -113,7 +117,8 @@ and destruction release every owned entry exactly once.
    declares its live tree without recursively inspecting itself. On ordinary
    frames this occurs before the sole layout pass, so it sees retained boxes
    and current unmutated declarations exactly when Clay does; transition frames
-   declare it after the preliminary pass.
+   declare it after the preliminary pass. Its lower details pane also shrinks
+   on short viewports so the header and element list retain usable space.
 7. Transition frames reserve final sizing/render scratch, the maximum possible
    wrapped-line and command growth, text-cache item/word nodes for each distinct
    prospective post-mutation key miss using its exact word count, retained
@@ -156,9 +161,11 @@ produce inaccurate layout.
 
 `src/renderer.zig` is the checked boundary between the untagged payload union
 and a concrete backend. It validates the complete stream before dispatch and
-does not allocate, draw pixels, load images, or rasterize fonts. The native and
-freestanding-WebAssembly smokes execute the same real layout and dispatcher
-path, with Node used only to instantiate and call the emitted WebAssembly.
+passes custom commands by borrowed pointer so context-owned paragraph handles
+retain their validated command identity. It does not allocate, draw pixels,
+load images, or rasterize fonts. The native and freestanding-WebAssembly smokes
+execute the same real layout and dispatcher path, with Node used only to
+instantiate and call the emitted WebAssembly.
 
 ## Command model
 
