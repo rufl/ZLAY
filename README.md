@@ -298,8 +298,9 @@ is a workload profiler, not a `Clay_MinMemorySize` equivalent.
 ## Verification and current limits
 
 The 2026-07-31 refresh reran the C-free `zig build check --summary all` gate:
-28/28 steps and 211/211 combined tests pass on Zig 0.16.0. No source-owned
-backlog row is actionable; ZL-202 still requires evidence from physical,
+28/28 steps and 211/211 combined tests pass on Zig 0.16.0. Current-source Craft
+is clean and Slopometer is 0.0/10 after excluding immutable pinned oracle inputs
+without excluding owned source. No source-owned backlog row is actionable; ZL-202 still requires evidence from physical,
 non-emulated AArch64 hardware and must not be closed by local code or QEMU.
 
 `zig build verify` is the complete local gate for the selected optimization
