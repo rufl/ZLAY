@@ -223,6 +223,7 @@ pub const native_type_additions = [_][]const u8{
     "TransitionExitConfig",
     "ContextOptions",
     "ContextError",
+    "DebugViewTheme",
 };
 
 /// Renderer/profile are deliberately separate native additions.
@@ -440,6 +441,24 @@ fn verifyNativeAdditions(comptime zlay: type) void {
     requireAlias(zlay.TransitionExitConfig, zlay.types.TransitionExitConfig, "TransitionExitConfig");
     requireAlias(zlay.ContextOptions, zlay.engine.Options, "ContextOptions");
     requireAlias(zlay.ContextError, zlay.engine.Error, "ContextError");
+    requireAlias(zlay.DebugViewTheme, zlay.debug.Theme, "DebugViewTheme");
+    requireExactSignature(
+        zlay.Context.setDebugViewTheme,
+        &.{ *zlay.Context, zlay.DebugViewTheme },
+        void,
+        "debug view theme setter",
+    );
+    requireExactSignature(
+        zlay.Context.getDebugViewTheme,
+        &.{*const zlay.Context},
+        zlay.DebugViewTheme,
+        "debug view theme getter",
+    );
+    requireAlias(
+        @TypeOf(zlay.debug_view_accessibility_theme),
+        zlay.DebugViewTheme,
+        "debug view accessibility theme",
+    );
     requireAlias(zlay.ParagraphProvider, zlay.paragraph_provider.Provider, "ParagraphProvider");
     requireAlias(zlay.ParagraphTextStyle, zlay.paragraph_provider.TextStyle, "ParagraphTextStyle");
     requireAlias(zlay.ParagraphRenderData, zlay.paragraph_provider.RenderData, "ParagraphRenderData");

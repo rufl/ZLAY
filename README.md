@@ -160,6 +160,11 @@ destruction. Operational failures abort the provider path instead of mixing its
 metrics with legacy wrapping. This proves the generic ZLAY integration seam,
 not a concrete text-engine adapter or rendered glyph output.
 
+`zig build paragraph-provider-example` runs a small dependency-free mock showing
+advanced typography, exact final-width layout, borrowed command resolution, and
+the retain/release pair required when renderer work outlives the frame. Its
+single-lease provider is instructional rather than a font-engine substitute.
+
 ## Frame lifecycle
 
 Create one `Context` for each independent UI and keep it alive across frames.
@@ -183,6 +188,15 @@ choose a graphics API.
 Pointer hit testing and hover callbacks use geometry retained from the most
 recent completed frame. Stable explicit IDs are therefore recommended for
 interactive, queried, scrolled, or transitioned elements.
+
+The built-in inspector keeps pinned colors and control sizes by default. Apps
+that prioritize debug-tool accessibility can opt into higher-contrast secondary
+text and 24-pixel tree/close targets without changing application UI:
+
+```zig
+context.setDebugViewTheme(zlay.debug_view_accessibility_theme);
+```
+
 Application hover, transition, external-scroll, text-measurement, and diagnostic
 callbacks may inspect context state, but frame/declaration/input mutation is
 guarded: fallible methods return `CallbackReentryNotAllowed`, recursive pointer
@@ -284,7 +298,7 @@ is a workload profiler, not a `Clay_MinMemorySize` equivalent.
 ## Verification and current limits
 
 The 2026-07-31 refresh reran the C-free `zig build check --summary all` gate:
-26/26 steps and 210/210 combined tests pass on Zig 0.16.0. No source-owned
+28/28 steps and 211/211 combined tests pass on Zig 0.16.0. No source-owned
 backlog row is actionable; ZL-202 still requires evidence from physical,
 non-emulated AArch64 hardware and must not be closed by local code or QEMU.
 
@@ -352,7 +366,7 @@ host. This optional rung is entirely outside raw-v1 capture, runner provenance,
 repository import, human review, and certification; it cannot close ZL-202 or
 replace execution on physical non-emulated AArch64 hardware.
 
-The 2026-07-31 current-source refresh passes 16/16 QEMU lane steps, 205/206
+The 2026-07-31 current-source refresh passes 16/16 QEMU lane steps, 206/207
 module tests with the one exact x86-only skip, 4/4 manifest tests, and the
 unchanged 18-line / 426-byte trace SHA-256
 `68b1ce5dfef146735d34889f337fa3f73a597b0511a5fc511f9e399d263dc787`.

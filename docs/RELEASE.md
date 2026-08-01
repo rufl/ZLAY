@@ -9,7 +9,8 @@ canonical source URL.
 ## Release candidate
 
 1. Start from a reviewed, clean commit with `/usr/bin/zig` 0.16.x.
-2. Run `/usr/bin/zig build verify-all --summary all`.
+2. Run `/usr/bin/zig build verify-all --summary all`. This includes the basic,
+   renderer, consumer, and mock paragraph-provider examples.
 3. Run `gitleaks dir --redact --no-banner .` and validate the read-only CI file
    with `actionlint .github/workflows/check.yml`.
 4. Change `build.zig.zon` from `0.1.0-dev` to the selected release version and

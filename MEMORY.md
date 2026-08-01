@@ -6,9 +6,12 @@
 - Production code under `src/` is Zig-only and has no package dependencies.
 - The optional paragraph-provider seam carries advanced shaping state and
   generation-bound render leases without selecting a font library.
+- The compiled mock provider demonstrates that seam, and the built-in inspector
+  has an opt-in higher-contrast, larger-target theme while retaining pinned
+  defaults.
 - Maintained local gate: `zig build verify-all` with Zig 0.16.0.
 - The only open proof item is physical AArch64 target-default hash execution;
-  the 2026-07-31 QEMU 11.0.3 refresh passes 205/206 module tests plus 4/4
+  the 2026-07-31 QEMU 11.0.3 refresh passes 206/207 module tests plus 4/4
   manifest tests but remains supplemental and cannot close it.
 - The first package release does not wait for ZL-202: its documented support
   boundary is native x86-64 Linux plus the maintained freestanding-WebAssembly

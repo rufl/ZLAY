@@ -30,7 +30,7 @@ QEMU is complete and archived, but is explicitly non-certifying.
 
 | ID | Work | Acceptance proof | Status |
 |---|---|---|---|
-| ZL-218 | Publish the first supported ZLAY package release | Owner selects the canonical source URL; package version leaves `-dev`; a clean URL-based consumer build, read-only CI run, signed/tagged release, and published changelog all pass | The first release is scoped to verified native x86-64 Linux plus the maintained freestanding-WebAssembly compile/runtime lanes; physical AArch64 certification is explicitly deferred to ZL-202. Publication remains externally blocked only on the canonical destination and resulting hosted URL/tag proof. Local source, path consumer, generated `file://` archive consumer, security, documentation, and aggregate verification gates pass; `docs/RELEASE.md` records the remaining procedure. |
+| ZL-218 | Publish the first supported ZLAY package release | Owner selects the canonical source URL; package version leaves `-dev`; a clean URL-based consumer build, read-only CI run, signed/tagged release, and published changelog all pass | The first release is scoped to verified native x86-64 Linux plus the maintained freestanding-WebAssembly compile/runtime lanes; physical AArch64 certification is explicitly deferred to ZL-202. Publication remains externally blocked only on the canonical destination and resulting hosted URL/tag proof. Local source, path and generated-archive consumers, the mock paragraph-provider example, security, documentation, and aggregate verification gates pass; `docs/RELEASE.md` records the remaining procedure. |
 
 ## P2 — cross-target proof
 

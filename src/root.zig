@@ -20,6 +20,9 @@ pub const engine = @import("context.zig");
 pub const Context = engine.Context;
 pub const ContextOptions = engine.Options;
 pub const ContextError = engine.Error;
+pub const DebugViewTheme = debug.Theme;
+pub const debug_view_default_theme = debug.default_theme;
+pub const debug_view_accessibility_theme = debug.accessibility_theme;
 
 pub const String = types.String;
 pub const StringSlice = types.StringSlice;

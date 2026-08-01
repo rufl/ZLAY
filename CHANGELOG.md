@@ -59,6 +59,10 @@ All notable changes to ZLAY are recorded here. The format follows
   local checkout. The first release scope is native x86-64 Linux plus the
   maintained freestanding-WebAssembly lanes; AArch64 certification remains
   separate tracked work.
+- A dependency-free mock paragraph-provider example covering advanced style,
+  final-width layout, typed render transport, and asynchronous lease ownership.
+- An opt-in inspector accessibility theme with higher-contrast secondary text
+  and larger tree/close controls while preserving exact default output.
 - Retained element queries, prior-frame pointer hit testing, hover callbacks,
   floating-root capture, internal/external scrolling, drag momentum, and nested
   scroll priority.
@@ -230,7 +234,7 @@ All notable changes to ZLAY are recorded here. The format follows
   pane on short viewports, preserving usable list space and non-negative render
   geometry without changing ordinary 400-by-300 inspector output.
 - Refreshed the non-certifying AArch64 QEMU lane on current sources: 16/16
-  steps, 205/206 module tests with the exact x86-only skip, 4/4 manifest tests,
+  steps, 206/207 module tests with the exact x86-only skip, 4/4 manifest tests,
   and unchanged 18-line C/Zig target-default hash parity.
 - Isolated nested `verify-all` mode builds in distinct local caches, eliminating
   a reproduced shared-cache race that could remove native and WebAssembly smoke

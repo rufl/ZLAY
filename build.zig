@@ -92,6 +92,23 @@ pub fn build(b: *std.Build) void {
     const example_step = b.step("example", "Run the renderer-neutral basic example");
     example_step.dependOn(&run_example.step);
 
+    const paragraph_provider_example = b.addExecutable(.{
+        .name = "zlay-paragraph-provider-mock",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("examples/paragraph_provider_mock.zig"),
+            .target = target,
+            .optimize = optimize,
+            .imports = &.{.{ .name = "zlay", .module = zlay }},
+        }),
+    });
+    b.installArtifact(paragraph_provider_example);
+    const run_paragraph_provider_example = b.addRunArtifact(paragraph_provider_example);
+    const paragraph_provider_example_step = b.step(
+        "paragraph-provider-example",
+        "Run the mock paragraph provider and retained-render lease example",
+    );
+    paragraph_provider_example_step.dependOn(&run_paragraph_provider_example.step);
+
     const renderer_smoke = b.addExecutable(.{
         .name = "zlay-renderer-smoke",
         .root_module = b.createModule(.{
@@ -478,6 +495,7 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&run_tests.step);
     check_step.dependOn(&run_ordinary_manifest_tests.step);
     check_step.dependOn(&example.step);
+    check_step.dependOn(&run_paragraph_provider_example.step);
     check_step.dependOn(&run_renderer_smoke.step);
     check_step.dependOn(&run_fixed_buffer_profile.step);
     check_step.dependOn(&run_consumer_smoke.step);

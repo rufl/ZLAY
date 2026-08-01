@@ -103,6 +103,7 @@ Configuration methods:
 | `setDebugModeEnabled(bool)` / `isDebugModeEnabled()` | Toggle the native built-in inspector and its upstream-compatible content-width reservation. |
 | `setDebugViewWidth(u32)` / `getDebugViewWidth()` | Override/read the default 400-pixel inspector width for following frames. |
 | `setDebugViewHighlightColor(Color)` / `getDebugViewHighlightColor()` | Override/read the translucent element-highlight color. |
+| `setDebugViewTheme(DebugViewTheme)` / `getDebugViewTheme()` | Override/read inspector text colors and tree/close target sizes. Defaults preserve pinned output; `debug_view_accessibility_theme` supplies higher-contrast secondary text and 24-pixel controls. Sizes are clamped to 1–30 pixels. |
 | `setCullingEnabled(bool)` | Enable or disable viewport command culling. Enabled by default. |
 | `setExternalScrollHandlingEnabled(bool)` | Switch clipped children to application-supplied offsets instead of internal offsets. |
 | `getMaxElementCount()` / `setMaxElementCount(count)` | Query/change the element declaration limit. The setter clamps values above `maxInt(i32)`. Pointer-array capacity is persistent like Clay's initialization-time allocation: raising the limit can grow it, while lowering the limit never reports a capacity below an already published hit count. |
@@ -136,6 +137,16 @@ inspector becomes viewport-wide instead of producing negative content width or
 overflowing past the right edge. Short viewports shrink the lower details pane
 and preserve room for the header and element list. Ordinary 400-by-300 inspector
 geometry remains unchanged when the viewport has enough space.
+
+For a higher-contrast inspector with larger interaction targets:
+
+```zig
+context.setDebugViewTheme(zlay.debug_view_accessibility_theme);
+```
+
+The default theme remains bit-compatible with the pinned inspector. A custom
+view changes only inspector presentation; application layout and commands
+outside the debug view are unaffected.
 
 The inspector uses the application's measurement callback with font ID zero.
 Pointer hit testing still consumes the prior completed frame: call
@@ -220,6 +231,10 @@ pub fn custom(
 The provider owns glyph runs, atlas references, and shaping data behind the
 handle. ZLAY supplies placement, clipping, paint color, lease lifetime, and the
 exact final layout width without choosing a font library.
+
+Run `zig build paragraph-provider-example` for a complete dependency-free mock
+that exercises advanced features/variations, typed custom-command resolution,
+and retaining a paragraph while queued renderer work outlives its frame.
 
 ### Fixed-buffer profiling
 

@@ -26,6 +26,20 @@ pub const color_4 = types.Color{ .r = 238, .g = 226, .b = 231, .a = 255 };
 pub const selected_row_color = types.Color{ .r = 102, .g = 80, .b = 78, .a = 255 };
 pub const default_highlight_color = types.Color{ .r = 168, .g = 66, .b = 28, .a = 100 };
 
+pub const Theme = struct {
+    text_color: types.Color = color_4,
+    muted_text_color: types.Color = color_3,
+    tree_control_size: u8 = 16,
+    close_control_size: u8 = 20,
+};
+
+pub const default_theme = Theme{};
+pub const accessibility_theme = Theme{
+    .muted_text_color = .{ .r = 214, .g = 204, .b = 208, .a = 255 },
+    .tree_control_size = 24,
+    .close_control_size = 24,
+};
+
 pub const ConfigType = enum(u8) {
     background_color,
     overlay_color,
@@ -458,6 +472,13 @@ test "debug constants and config labels match the pinned inspector" {
     try std.testing.expectEqualStrings("Background", configLabel(.background_color).label.asSlice());
     try std.testing.expectEqual(types.Color{ .r = 105, .g = 210, .b = 231, .a = 255 }, configLabel(.text).color);
     try std.testing.expectEqualStrings("Scroll", configLabel(.clip).label.asSlice());
+    try std.testing.expectEqual(color_3, default_theme.muted_text_color);
+    try std.testing.expectEqual(@as(u8, 16), default_theme.tree_control_size);
+    try std.testing.expectEqual(
+        types.Color{ .r = 214, .g = 204, .b = 208, .a = 255 },
+        accessibility_theme.muted_text_color,
+    );
+    try std.testing.expectEqual(@as(u8, 24), accessibility_theme.close_control_size);
 }
 
 test "element badges preserve pinned declaration order and bitwise radius detection" {

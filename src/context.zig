@@ -346,6 +346,7 @@ pub const Context = struct {
     pending_debug_collapse_id: ?u32 = null,
     debug_view_width: u32 = debug_inspector.default_view_width,
     debug_highlight_color: types.Color = debug_inspector.default_highlight_color,
+    debug_theme: debug_inspector.Theme = debug_inspector.default_theme,
     debug_warnings_enabled: bool = false,
     external_scroll_handling_enabled: bool = false,
     apply_transition_overrides: bool = false,
@@ -562,6 +563,29 @@ pub const Context = struct {
 
     pub fn getDebugViewHighlightColor(self: *const Context) types.Color {
         return self.debug_highlight_color;
+    }
+
+    pub fn setDebugViewTheme(self: *Context, theme: debug_inspector.Theme) void {
+        if (self.application_callback_phase != .none) return;
+        self.debug_theme = theme;
+        self.debug_theme.tree_control_size = @max(
+            1,
+            @min(
+                self.debug_theme.tree_control_size,
+                @as(u8, @intCast(debug_inspector.row_height)),
+            ),
+        );
+        self.debug_theme.close_control_size = @max(
+            1,
+            @min(
+                self.debug_theme.close_control_size,
+                @as(u8, @intCast(debug_inspector.row_height)),
+            ),
+        );
+    }
+
+    pub fn getDebugViewTheme(self: *const Context) debug_inspector.Theme {
+        return self.debug_theme;
     }
 
     pub fn setCullingEnabled(self: *Context, enabled: bool) void {
@@ -1705,9 +1729,9 @@ pub const Context = struct {
         return persistent.debug_data.collision;
     }
 
-    fn debugTextConfig(offscreen: bool, title: bool) types.TextElementConfig {
+    fn debugTextConfig(self: *const Context, offscreen: bool, title: bool) types.TextElementConfig {
         return .{
-            .text_color = if (offscreen or title) debug_inspector.color_3 else debug_inspector.color_4,
+            .text_color = if (offscreen or title) self.debug_theme.muted_text_color else self.debug_theme.text_color,
             .font_size = 16,
             .wrap_mode = .none,
         };
@@ -1742,13 +1766,14 @@ pub const Context = struct {
             .corner_radius = types.cornerRadius(4),
             .border = .{ .color = label.color, .width = types.borderOutside(1) },
         });
-        try self.text(label.label, debugTextConfig(offscreen, false));
+        try self.text(label.label, self.debugTextConfig(offscreen, false));
         try self.closeElement();
     }
 
     fn emitDebugElementRow(self: *Context, row: debug_inspector.Row) !void {
         const node_index = row.element_index orelse return;
         const node = self.nodes.items[node_index];
+        const tree_control_size: f32 = @floatFromInt(self.debug_theme.tree_control_size);
         const offscreen = debug_inspector.isOffscreen(self.debugBoundingBox(node), self.layout_dimensions, self.culling_enabled);
         const row_id = hashes.stringWithOffset(types.String.literal("Clay__DebugView_ElementOuter"), node.element_id.id, 0);
         try self.openElementWithId(row_id, .{ .layout = .{
@@ -1761,7 +1786,10 @@ pub const Context = struct {
             const collapse_id = hashes.stringWithOffset(types.String.literal("Clay__DebugView_CollapseElement"), node.element_id.id, 0);
             try self.openElementWithId(collapse_id, .{
                 .layout = .{
-                    .sizing = .{ .width = types.fixed(16), .height = types.fixed(16) },
+                    .sizing = .{
+                        .width = types.fixed(tree_control_size),
+                        .height = types.fixed(tree_control_size),
+                    },
                     .child_alignment = .{ .x = .center, .y = .center },
                 },
                 .corner_radius = types.cornerRadius(4),
@@ -1769,14 +1797,17 @@ pub const Context = struct {
             });
             const collapsed = debugCollapsedLookup(self, node.element_id.id);
             if (collapsed) {
-                try self.debugTextLiteral("+", debugTextConfig(false, false));
+                try self.debugTextLiteral("+", self.debugTextConfig(false, false));
             } else {
-                try self.debugTextLiteral("-", debugTextConfig(false, false));
+                try self.debugTextLiteral("-", self.debugTextConfig(false, false));
             }
             try self.closeElement();
         } else {
             try self.openElement(.{ .layout = .{
-                .sizing = .{ .width = types.fixed(16), .height = types.fixed(16) },
+                .sizing = .{
+                    .width = types.fixed(tree_control_size),
+                    .height = types.fixed(tree_control_size),
+                },
                 .child_alignment = .{ .x = .center, .y = .center },
             } });
             try self.openElement(.{
@@ -1793,7 +1824,7 @@ pub const Context = struct {
                 .layout = .{ .padding = .{ .left = 8, .right = 8, .top = 2, .bottom = 2 } },
                 .border = .{ .color = .{ .r = 177, .g = 147, .b = 8, .a = 255 }, .width = types.borderOutside(1) },
             });
-            try self.debugTextLiteral("Duplicate ID", debugTextConfig(true, false));
+            try self.debugTextLiteral("Duplicate ID", self.debugTextConfig(true, false));
             try self.closeElement();
         }
         if (offscreen) {
@@ -1801,13 +1832,13 @@ pub const Context = struct {
                 .layout = .{ .padding = .{ .left = 8, .right = 8, .top = 2, .bottom = 2 } },
                 .border = .{ .color = debug_inspector.color_3, .width = types.borderOutside(1) },
             });
-            try self.debugTextLiteral("Offscreen", debugTextConfig(true, false));
+            try self.debugTextLiteral("Offscreen", self.debugTextConfig(true, false));
             try self.closeElement();
         }
 
         if (node.element_id.string_id.length > 0) {
             try self.openElement(.{});
-            const name_config = debugTextConfig(offscreen, false);
+            const name_config = self.debugTextConfig(offscreen, false);
             try self.text(node.element_id.string_id, name_config);
             if (node.element_id.offset != 0) {
                 try self.debugTextLiteral(" (", name_config);
@@ -1830,7 +1861,7 @@ pub const Context = struct {
         const text_index = node.text_index orelse return;
         const preview = debug_inspector.rawTextPreview(self.texts.items[text_index].text);
         const offscreen = debug_inspector.isOffscreen(self.debugBoundingBox(node), self.layout_dimensions, self.culling_enabled);
-        const config = debugTextConfig(offscreen, false);
+        const config = self.debugTextConfig(offscreen, false);
 
         try self.openElement(.{ .layout = .{
             .sizing = .{ .height = types.fixed(@floatFromInt(debug_inspector.row_height)) },
@@ -1907,7 +1938,7 @@ pub const Context = struct {
             .corner_radius = types.cornerRadius(4),
             .border = .{ .color = label.color, .width = types.borderOutside(1) },
         });
-        try self.text(label.label, debugTextConfig(false, false));
+        try self.text(label.label, self.debugTextConfig(false, false));
         try self.closeElement();
     }
 
@@ -1981,8 +2012,8 @@ pub const Context = struct {
     ) !void {
         const selected_node = self.nodes.items[selected_index];
         const selected_box = self.debugBoundingBox(selected_node);
-        const info = debugTextConfig(false, false);
-        const title = debugTextConfig(false, true);
+        const info = self.debugTextConfig(false, false);
+        const title = self.debugTextConfig(false, true);
         try self.openElementUnconfigured();
         const scroll_offset = self.getScrollOffset();
         try self.configureOpenElement(.{
@@ -2257,7 +2288,7 @@ pub const Context = struct {
     }
 
     fn emitDebugWarningsPane(self: *Context, details_height: f32) !void {
-        const warning_config = debugTextConfig(false, false);
+        const warning_config = self.debugTextConfig(false, false);
         const warning_id = hashes.string(types.String.literal("Clay__DebugViewWarningsScrollPane"), 0);
         const scroll_offset = self.getScrollOffsetForId(warning_id.id);
         try self.openElementWithId(warning_id, .{
@@ -2382,12 +2413,16 @@ pub const Context = struct {
             },
             .background_color = debug_inspector.color_2,
         });
-        try self.debugTextLiteral("Clay Debug Tools", debugTextConfig(false, false));
+        try self.debugTextLiteral("Clay Debug Tools", self.debugTextConfig(false, false));
         try self.openElement(.{ .layout = .{ .sizing = .{ .width = types.grow() } } });
         try self.closeElement();
+        const close_control_size: f32 = @floatFromInt(self.debug_theme.close_control_size);
         try self.openElement(.{
             .layout = .{
-                .sizing = .{ .width = types.fixed(debug_inspector.row_height - 10), .height = types.fixed(debug_inspector.row_height - 10) },
+                .sizing = .{
+                    .width = types.fixed(close_control_size),
+                    .height = types.fixed(close_control_size),
+                },
                 .child_alignment = .{ .x = .center, .y = .center },
             },
             .background_color = .{ .r = 217, .g = 91, .b = 67, .a = 80 },
@@ -2395,7 +2430,7 @@ pub const Context = struct {
             .border = .{ .color = .{ .r = 217, .g = 91, .b = 67, .a = 255 }, .width = types.borderOutside(1) },
         });
         try self.onHover(debugCloseHover, self);
-        try self.debugTextLiteral("x", debugTextConfig(false, false));
+        try self.debugTextLiteral("x", self.debugTextConfig(false, false));
         try self.closeElement();
         try self.closeElement();
 

@@ -172,6 +172,48 @@ test "live inspector clamps its panes to a narrow viewport" {
     }
 }
 
+test "accessibility inspector theme increases interactive targets" {
+    var context = zlay.Context.init(
+        std.testing.allocator,
+        .{ .width = 1000, .height = 600 },
+        .{},
+    );
+    defer context.deinit();
+    context.setMeasureTextFunction(measureText, null);
+    context.setDebugViewTheme(zlay.debug_view_accessibility_theme);
+    context.setDebugModeEnabled(true);
+
+    const parent_id = context.id("accessible-parent");
+    try renderUserTree(&context, parent_id, context.id("accessible-child"));
+
+    const collapse_id = zlay.hash.stringWithOffset(
+        zlay.String.literal("Clay__DebugView_CollapseElement"),
+        parent_id.id,
+        0,
+    );
+    const collapse = context.getElementData(collapse_id).bounding_box;
+    try std.testing.expectEqual(@as(f32, 24), collapse.width);
+    try std.testing.expectEqual(@as(f32, 24), collapse.height);
+
+    const panel_id = context.id("Clay__DebugView");
+    const header_id = zlay.hash.number(0, panel_id.id);
+    const close_id = zlay.hash.number(2, header_id.id);
+    const close = context.getElementData(close_id).bounding_box;
+    try std.testing.expectEqual(@as(f32, 24), close.width);
+    try std.testing.expectEqual(@as(f32, 24), close.height);
+    try std.testing.expectEqual(
+        zlay.debug_view_accessibility_theme.muted_text_color,
+        context.getDebugViewTheme().muted_text_color,
+    );
+
+    var invalid_sizes = zlay.debug_view_default_theme;
+    invalid_sizes.tree_control_size = 0;
+    invalid_sizes.close_control_size = std.math.maxInt(u8);
+    context.setDebugViewTheme(invalid_sizes);
+    try std.testing.expectEqual(@as(u8, 1), context.getDebugViewTheme().tree_control_size);
+    try std.testing.expectEqual(@as(u8, 30), context.getDebugViewTheme().close_control_size);
+}
+
 test "rejected inspector frames commit no selection collapse or close interaction" {
     const render_capacity: usize = 512;
     var context = zlay.Context.init(std.testing.allocator, .{ .width = 1000, .height = 600 }, .{

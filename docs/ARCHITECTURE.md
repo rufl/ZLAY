@@ -65,6 +65,10 @@ Generation numbers let the context prune stale elements and cache entries.
 Completed bounding boxes and hover callbacks become the input to the next
 frame's hit testing.
 
+Inspector presentation is context-local. The default `debug.Theme` preserves
+the pinned output exactly; the optional accessibility preset changes only debug
+text contrast and tree/close target sizes.
+
 All storage uses the allocator passed to `Context.init`. There is no implicit
 global context, hidden fallback allocator, or C allocation path. One context is
 mutable and not internally synchronized; callers must serialize access to it.
