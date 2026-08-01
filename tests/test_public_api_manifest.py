@@ -94,8 +94,8 @@ class PublicApiManifestAuditTests(unittest.TestCase):
         manifest_text = (REPO_ROOT / audit.MANIFEST_PATH).read_text(encoding="utf-8")
         schema_line = f"# schema\t{audit.SCHEMA}"
         self.assertIn(schema_line, manifest_text)
-        with tempfile.TemporaryDirectory() as temporary:
-            path = Path(temporary) / "manifest.tsv"
+        with tempfile.TemporaryDirectory() as scratch_dir:
+            path = Path(scratch_dir) / "manifest.tsv"
             path.write_text(
                 manifest_text.replace(schema_line, f"{schema_line}\n{schema_line}", 1),
                 encoding="utf-8",

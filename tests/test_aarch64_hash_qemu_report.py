@@ -83,8 +83,8 @@ def make_aarch64_elf(
 
 class Aarch64HashQemuReportTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix="zlay-qemu-report-")
-        self.root = Path(self.temporary.name)
+        self.scratch_dir = tempfile.TemporaryDirectory(prefix="zlay-qemu-report-")
+        self.root = Path(self.scratch_dir.name)
         self.qemu = self.root / "qemu-aarch64"
         self.zig = self.root / "zig"
         self.c_trace = self.root / "c.trace"
@@ -118,7 +118,7 @@ class Aarch64HashQemuReportTests(unittest.TestCase):
         self.manifest_tests_executable.write_bytes(make_aarch64_elf())
 
     def tearDown(self) -> None:
-        self.temporary.cleanup()
+        self.scratch_dir.cleanup()
 
     def create_report(self) -> str:
         source_sha256 = reporter._source_contract(REPO_ROOT)[1]

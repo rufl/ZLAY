@@ -304,7 +304,9 @@ explicitly reviewed and recorded.
 and compiled-C differential fixtures for one optimization mode. `zig build
 verify-all` runs the complete Debug and ReleaseSafe differential matrix, then
 the C-free native/WebAssembly checks in ReleaseFast and ReleaseSmall, and also
-runs `clay-coverage-certify`. That certifier binds the exact header and complete
+runs `clay-coverage-certify`. The four nested mode invocations use distinct
+local caches, preventing shared-cache cleanup from invalidating another mode's
+pending executable or WebAssembly smoke artifact. The certifier binds the exact header and complete
 C-fixture inventory, then requires every executable line, source-level function,
 and source branch direction emitted by the host Clang/C99 scalar/common profile
 and native x86-64 SIMD supplement either to run or to have one exact reviewed

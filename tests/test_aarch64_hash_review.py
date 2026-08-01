@@ -55,10 +55,10 @@ class Aarch64HashReviewTests(unittest.TestCase):
     def setUp(self) -> None:
         self.fsync_patch = mock.patch.object(raw_evidence.os, "fsync")
         self.fsync_patch.start()
-        self.temporary = tempfile.TemporaryDirectory(
+        self.scratch_dir = tempfile.TemporaryDirectory(
             prefix=".zlay-review-test-", dir=REPO_ROOT
         )
-        self.work = Path(self.temporary.name)
+        self.work = Path(self.scratch_dir.name)
         self.runner_record = self.work / "runner-record.txt"
         self.runner_record.write_text(
             "runner=lab-arm64-01\nmodel=Example physical ARMv8 board\n",
@@ -185,7 +185,7 @@ class Aarch64HashReviewTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.fsync_patch.stop()
-        self.temporary.cleanup()
+        self.scratch_dir.cleanup()
 
     def create_receipt(self) -> dict:
         return review.create_receipt(

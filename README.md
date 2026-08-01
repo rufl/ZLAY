@@ -291,7 +291,9 @@ non-emulated AArch64 hardware and must not be closed by local code or QEMU.
 `zig build verify` is the complete local gate for the selected optimization
 mode; `zig build verify-all` runs it sequentially in Debug and ReleaseSafe,
 then runs the C-free native/WebAssembly check in ReleaseFast and ReleaseSmall
-and certifies accountable pinned-Clay source coverage.
+and certifies accountable pinned-Clay source coverage. Each nested mode uses a
+separate local Zig cache so one build cannot evict another mode's pending run
+artifacts.
 It format-checks the Zig sources, runs the native suite, compiles the examples and
 `wasm32-freestanding` library target, executes the same renderer smoke natively
 and through Node's WebAssembly runtime, verifies the pinned `clay.h` digest,

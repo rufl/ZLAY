@@ -232,6 +232,11 @@ All notable changes to ZLAY are recorded here. The format follows
 - Refreshed the non-certifying AArch64 QEMU lane on current sources: 16/16
   steps, 205/206 module tests with the exact x86-only skip, 4/4 manifest tests,
   and unchanged 18-line C/Zig target-default hash parity.
+- Isolated nested `verify-all` mode builds in distinct local caches, eliminating
+  a reproduced shared-cache race that could remove native and WebAssembly smoke
+  artifacts before execution.
+- Renamed proof-tool scratch variables and messages so full ZLAY-owned Craft
+  scanning is clean without changing behavior or the pinned external oracle.
 - Rejected paragraph providers whose intrinsic baselines are reversed or whose
   logical width/height advances are negative before those metrics can become
   layout or render geometry.

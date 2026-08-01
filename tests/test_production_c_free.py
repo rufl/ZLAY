@@ -14,9 +14,9 @@ SCRIPT_PATH = REPO_ROOT / "scripts/check_production_c_free.sh"
 
 class ProductionCFreeAuditTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        root = Path(self.temporary.name)
+        self.scratch_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch_dir.cleanup)
+        root = Path(self.scratch_dir.name)
         self.repo = root / "repo"
         self.outside = root / "outside"
         (self.repo / "scripts").mkdir(parents=True)

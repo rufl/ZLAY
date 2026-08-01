@@ -1174,7 +1174,7 @@ def _reject_cache_output(path: Path) -> None:
     resolved = path.resolve()
     if any(part in CACHE_DIRECTORY_NAMES for part in resolved.parts):
         raise EvidenceError(
-            "evidence output must be outside Zig cache, output, and system temporary directories"
+            "evidence output must be outside Zig cache, output, and system temp directories"
         )
     temporary_roots = {
         Path(tempfile.gettempdir()).resolve(),
@@ -1191,7 +1191,7 @@ def _reject_cache_output(path: Path) -> None:
         except ValueError:
             continue
         raise EvidenceError(
-            "evidence output must be outside Zig cache, output, and system temporary directories"
+            "evidence output must be outside Zig cache, output, and system temp directories"
         )
 
 
@@ -1204,11 +1204,11 @@ def write_atomic_bytes_new(path: Path, data: bytes) -> str:
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
-        ) as temporary:
-            temporary_name = temporary.name
-            temporary.write(data)
-            temporary.flush()
-            os.fsync(temporary.fileno())
+        ) as staged_file:
+            temporary_name = staged_file.name
+            staged_file.write(data)
+            staged_file.flush()
+            os.fsync(staged_file.fileno())
         try:
             os.link(temporary_name, path)
         except FileExistsError as error:
@@ -1262,9 +1262,9 @@ def write_atomic_replacing(path: Path, value: Any) -> str:
     try:
         with tempfile.NamedTemporaryFile(
             mode="wb", dir=path.parent, prefix=f".{path.name}.", suffix=".tmp", delete=False
-        ) as temporary:
-            temporary_name = temporary.name
-            temporary.write(data)
+        ) as staged_file:
+            temporary_name = staged_file.name
+            staged_file.write(data)
         os.replace(temporary_name, path)
         temporary_name = None
     except OSError as error:

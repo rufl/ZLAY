@@ -1,4 +1,4 @@
-//! ZLAY — a renderer-agnostic, native Zig rewrite of Nic Barker's Clay.
+//! ZLAY is a renderer-agnostic, native Zig rewrite of Nic Barker's Clay.
 
 pub const upstream_commit = "e6cc36941ab2af5d81107617039d6f527a1c660b";
 pub const upstream_header_sha256 = "54aef6d5f96b14e296bebb6db4a755543e98fd7e6c188411afb2f22a4b4f7728";

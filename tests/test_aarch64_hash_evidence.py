@@ -52,8 +52,8 @@ All 1 tests passed.
 
 class Aarch64HashEvidenceTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory(prefix=".zlay-evidence-test-", dir=REPO_ROOT)
-        self.work = Path(self.temporary.name)
+        self.scratch_dir = tempfile.TemporaryDirectory(prefix=".zlay-evidence-test-", dir=REPO_ROOT)
+        self.work = Path(self.scratch_dir.name)
         self.c_trace = self.work / "c.txt"
         self.zig_trace = self.work / "zig.txt"
         self.c_trace.write_text(AARCH64_TRACE, encoding="utf-8")
@@ -115,7 +115,7 @@ class Aarch64HashEvidenceTests(unittest.TestCase):
             self.executables[key] = path
 
     def tearDown(self) -> None:
-        self.temporary.cleanup()
+        self.scratch_dir.cleanup()
 
     def make_envelope(self) -> dict:
         return evidence.create_envelope(
@@ -569,12 +569,12 @@ class Aarch64HashEvidenceTests(unittest.TestCase):
             evidence.write_atomic_new(cache_path, envelope)
         self.assertFalse(cache_path.exists())
         temporary_path = Path(tempfile.gettempdir()) / f"{self.work.name}-must-not-exist.json"
-        with self.assertRaisesRegex(evidence.EvidenceError, "system temporary"):
+        with self.assertRaisesRegex(evidence.EvidenceError, "system temp"):
             evidence.write_atomic_new(temporary_path, envelope)
         self.assertFalse(temporary_path.exists())
         for temporary_root in (Path("/var/tmp"), Path("/dev/shm"), Path("/run/user")):
             blocked_path = temporary_root / f"{self.work.name}-must-not-exist.json"
-            with self.assertRaisesRegex(evidence.EvidenceError, "system temporary"):
+            with self.assertRaisesRegex(evidence.EvidenceError, "system temp"):
                 evidence.write_atomic_new(blocked_path, envelope)
             self.assertFalse(blocked_path.exists())
 

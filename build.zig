@@ -2184,10 +2184,38 @@ pub fn build(b: *std.Build) void {
     verify_step.dependOn(divergence_step);
     verify_step.dependOn(wasm_runtime_step);
 
-    const verify_debug = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "verify", "-Doptimize=Debug" });
-    const verify_release_safe = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "verify", "-Doptimize=ReleaseSafe" });
-    const check_release_fast = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "-Doptimize=ReleaseFast" });
-    const check_release_small = b.addSystemCommand(&.{ b.graph.zig_exe, "build", "check", "-Doptimize=ReleaseSmall" });
+    const verify_debug = b.addSystemCommand(&.{
+        b.graph.zig_exe,
+        "build",
+        "verify",
+        "-Doptimize=Debug",
+        "--cache-dir",
+        ".zig-cache/verify-debug",
+    });
+    const verify_release_safe = b.addSystemCommand(&.{
+        b.graph.zig_exe,
+        "build",
+        "verify",
+        "-Doptimize=ReleaseSafe",
+        "--cache-dir",
+        ".zig-cache/verify-release-safe",
+    });
+    const check_release_fast = b.addSystemCommand(&.{
+        b.graph.zig_exe,
+        "build",
+        "check",
+        "-Doptimize=ReleaseFast",
+        "--cache-dir",
+        ".zig-cache/check-release-fast",
+    });
+    const check_release_small = b.addSystemCommand(&.{
+        b.graph.zig_exe,
+        "build",
+        "check",
+        "-Doptimize=ReleaseSmall",
+        "--cache-dir",
+        ".zig-cache/check-release-small",
+    });
     verify_release_safe.step.dependOn(&verify_debug.step);
     check_release_fast.step.dependOn(&verify_release_safe.step);
     check_release_small.step.dependOn(&check_release_fast.step);

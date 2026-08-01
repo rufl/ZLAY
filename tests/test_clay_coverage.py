@@ -28,9 +28,9 @@ def metric(total: int, covered: int) -> dict[str, int | float]:
 
 class ClayCoverageCertificationTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.repo = Path(self.temporary.name)
+        self.scratch_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch_dir.cleanup)
+        self.repo = Path(self.scratch_dir.name)
         (self.repo / "tests/oracle").mkdir(parents=True)
         self.header = self.repo / "tests/oracle/clay.h"
         self.header.write_text(
@@ -454,9 +454,9 @@ class ClayCoverageCertificationTests(unittest.TestCase):
 
 class ClaySimdCoverageCertificationTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.repo = Path(self.temporary.name)
+        self.scratch_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.scratch_dir.cleanup)
+        self.repo = Path(self.scratch_dir.name)
         (self.repo / "tests/oracle").mkdir(parents=True)
         self.header = self.repo / "tests/oracle/clay.h"
         self.header.write_text(
