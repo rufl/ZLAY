@@ -2,7 +2,7 @@
 
 Audit date: 2026-07-13  
 Evidence-workflow refresh: 2026-07-14  
-Supplemental AArch64 emulation refresh: 2026-07-31
+Supplemental AArch64 emulation refresh: 2026-08-02
 Text-cache topology refresh: 2026-07-15  
 Accountable source-coverage refresh: 2026-07-15  
 Normative source: Nic Barker's `clay.h` at commit

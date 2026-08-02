@@ -35,9 +35,9 @@ that exact URL and hash, then run:
 ```
 
 This must compile and execute the external-backend consumer without referring to
-ZLAY through a local path. A current-source local `file://` archive smoke passed
-before this procedure was recorded; the canonical hosted URL must still repeat
-the proof.
+ZLAY through a local path. The latest current-source local `file://` archive
+smoke is recorded in `.overzeer/release-smoke.md`; the canonical hosted URL
+must still repeat that proof.
 
 ## Publication
 

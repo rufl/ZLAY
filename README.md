@@ -313,7 +313,7 @@ is a workload profiler, not a `Clay_MinMemorySize` equivalent.
 
 ## Verification and current limits
 
-The 2026-07-31 refresh reran the C-free `zig build check --summary all` gate:
+The 2026-08-02 refresh reran the C-free `zig build check --summary all` gate:
 28/28 steps and 214/214 combined tests pass on Zig 0.16.0. Current-source Craft
 is clean and Slopometer is 0.0/10 after excluding immutable pinned oracle inputs
 without excluding owned source. No source-owned backlog row is actionable; ZL-202 still requires evidence from physical,
@@ -386,7 +386,7 @@ host. This optional rung is entirely outside raw-v1 capture, runner provenance,
 repository import, human review, and certification; it cannot close ZL-202 or
 replace execution on physical non-emulated AArch64 hardware.
 
-The 2026-07-31 current-source refresh passes 16/16 QEMU lane steps, 209/210
+The 2026-08-02 current-source refresh passes 16/16 QEMU lane steps, 209/210
 module tests with the one exact x86-only skip, 4/4 manifest tests, and the
 unchanged 18-line / 426-byte trace SHA-256
 `68b1ce5dfef146735d34889f337fa3f73a597b0511a5fc511f9e399d263dc787`.

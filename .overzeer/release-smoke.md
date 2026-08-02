@@ -1,12 +1,12 @@
 ZLAY_RELEASE_SMOKE_V1
 status=passed
-checked_utc=2026-07-31
+checked_utc=2026-08-02
 zig_version=0.16.0
 package_version=0.1.0-dev
 package_paths=build.zig,build.zig.zon,src,examples,scripts,tests,docs,evidence,README.md,LICENSE.md,NOTICE.md,BACKLOG.md,BACKLOG_ARCHIVE.md,MEMORY.md,ROADMAP.md,SECURITY.md,CHANGELOG.md,CONTRIBUTING.md
 archive_transport=file-url
-archive_bytes=507385
-package_hash=zlay-0.1.0-dev-6uJQdISvJwDo6RHP8yrAk_zXBVGHmWy7h7zNl-wax2cR
+archive_bytes=508041
+package_hash=zlay-0.1.0-dev-6uJQdA-0JwC4IFmH7a0hiEXTHSLEHYz5aRlrVH_3cCAH
 consumer_fixture=tests/consumer
 consumer_result=passed
 canonical_hosted_url=false

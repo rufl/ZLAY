@@ -15,7 +15,7 @@
   workflow runs the complete aggregate matrix.
 - Maintained local gate: `zig build verify-all` with Zig 0.16.0.
 - The only open proof item is physical AArch64 target-default hash execution;
-  the 2026-07-31 QEMU 11.0.3 refresh passes 209/210 module tests plus 4/4
+  the 2026-08-02 QEMU 11.0.3 refresh passes 209/210 module tests plus 4/4
   manifest tests but remains supplemental and cannot close it.
 - The first package release does not wait for ZL-202: its documented support
   boundary is native x86-64 Linux plus the maintained freestanding-WebAssembly
