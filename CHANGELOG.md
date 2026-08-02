@@ -62,7 +62,10 @@ All notable changes to ZLAY are recorded here. The format follows
 - A dependency-free mock paragraph-provider example covering advanced style,
   final-width layout, typed render transport, and asynchronous lease ownership.
 - An opt-in inspector accessibility theme with higher-contrast secondary text
-  and larger tree/close controls while preserving exact default output.
+  plus larger text, rows, and tree/close controls while preserving exact
+  default output.
+- A read-only manual and weekly GitHub Actions workflow for the complete
+  `verify-all` matrix, separate from the faster push/pull-request check.
 - Retained element queries, prior-frame pointer hit testing, hover callbacks,
   floating-root capture, internal/external scrolling, drag momentum, and nested
   scroll priority.

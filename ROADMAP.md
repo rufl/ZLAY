@@ -4,6 +4,8 @@
 
 - Keep `zig build verify-all` green across Debug, ReleaseSafe, ReleaseFast,
   ReleaseSmall, native, and freestanding WebAssembly lanes.
+- Keep the read-only manual/weekly hosted `verify-all` workflow aligned with
+  that local aggregate gate.
 - Keep renderer and paragraph-provider contracts allocation-safe, bounded, and
   independent of any concrete graphics or font dependency.
 

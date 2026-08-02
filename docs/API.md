@@ -103,7 +103,7 @@ Configuration methods:
 | `setDebugModeEnabled(bool)` / `isDebugModeEnabled()` | Toggle the native built-in inspector and its upstream-compatible content-width reservation. |
 | `setDebugViewWidth(u32)` / `getDebugViewWidth()` | Override/read the default 400-pixel inspector width for following frames. |
 | `setDebugViewHighlightColor(Color)` / `getDebugViewHighlightColor()` | Override/read the translucent element-highlight color. |
-| `setDebugViewTheme(DebugViewTheme)` / `getDebugViewTheme()` | Override/read inspector text colors and tree/close target sizes. Defaults preserve pinned output; `debug_view_accessibility_theme` supplies higher-contrast secondary text and 24-pixel controls. Sizes are clamped to 1–30 pixels. |
+| `setDebugViewTheme(DebugViewTheme)` / `getDebugViewTheme()` | Override/read inspector text colors, font size, row height, and tree/close target sizes. Defaults preserve pinned output. Font size clamps to 8–48 pixels, controls to 1–30 pixels, and rows to their largest content size through 64 pixels. |
 | `setCullingEnabled(bool)` | Enable or disable viewport command culling. Enabled by default. |
 | `setExternalScrollHandlingEnabled(bool)` | Switch clipped children to application-supplied offsets instead of internal offsets. |
 | `getMaxElementCount()` / `setMaxElementCount(count)` | Query/change the element declaration limit. The setter clamps values above `maxInt(i32)`. Pointer-array capacity is persistent like Clay's initialization-time allocation: raising the limit can grow it, while lowering the limit never reports a capacity below an already published hit count. |
@@ -138,14 +138,15 @@ overflowing past the right edge. Short viewports shrink the lower details pane
 and preserve room for the header and element list. Ordinary 400-by-300 inspector
 geometry remains unchanged when the viewport has enough space.
 
-For a higher-contrast inspector with larger interaction targets:
+For a higher-contrast inspector with 18-pixel text, 36-pixel rows, and
+24-pixel interaction targets:
 
 ```zig
 context.setDebugViewTheme(zlay.debug_view_accessibility_theme);
 ```
 
 The default theme remains bit-compatible with the pinned inspector. A custom
-view changes only inspector presentation; application layout and commands
+theme changes only inspector presentation; application layout and commands
 outside the debug view are unaffected.
 
 The inspector uses the application's measurement callback with font ID zero.

@@ -46,6 +46,24 @@ fn expectBoxEqual(expected: zlay.BoundingBox, actual: zlay.BoundingBox) !void {
     try std.testing.expectApproxEqAbs(expected.height, actual.height, 0.01);
 }
 
+fn linearColorChannel(channel: f32) f32 {
+    const normalized = channel / 255;
+    if (normalized <= 0.04045) return normalized / 12.92;
+    return std.math.pow(f32, (normalized + 0.055) / 1.055, 2.4);
+}
+
+fn contrastRatio(foreground: zlay.Color, background: zlay.Color) f32 {
+    const foreground_luminance = 0.2126 * linearColorChannel(foreground.r) +
+        0.7152 * linearColorChannel(foreground.g) +
+        0.0722 * linearColorChannel(foreground.b);
+    const background_luminance = 0.2126 * linearColorChannel(background.r) +
+        0.7152 * linearColorChannel(background.g) +
+        0.0722 * linearColorChannel(background.b);
+    const lighter = @max(foreground_luminance, background_luminance);
+    const darker = @min(foreground_luminance, background_luminance);
+    return (lighter + 0.05) / (darker + 0.05);
+}
+
 fn containsElementRow(context: *const zlay.Context, element_id: u32) bool {
     for (context.debug_rows.items) |row| {
         if (row.kind == .element and row.element_id == element_id) return true;
@@ -172,7 +190,7 @@ test "live inspector clamps its panes to a narrow viewport" {
     }
 }
 
-test "accessibility inspector theme increases interactive targets" {
+test "accessibility inspector theme increases readability and interactive targets" {
     var context = zlay.Context.init(
         std.testing.allocator,
         .{ .width = 1000, .height = 600 },
@@ -195,6 +213,16 @@ test "accessibility inspector theme increases interactive targets" {
     try std.testing.expectEqual(@as(f32, 24), collapse.width);
     try std.testing.expectEqual(@as(f32, 24), collapse.height);
 
+    const row_id = zlay.hash.stringWithOffset(
+        zlay.String.literal("Clay__DebugView_ElementOuter"),
+        parent_id.id,
+        0,
+    );
+    try std.testing.expectEqual(
+        @as(f32, 36),
+        context.getElementData(row_id).bounding_box.height,
+    );
+
     const panel_id = context.id("Clay__DebugView");
     const header_id = zlay.hash.number(0, panel_id.id);
     const close_id = zlay.hash.number(2, header_id.id);
@@ -202,14 +230,42 @@ test "accessibility inspector theme increases interactive targets" {
     try std.testing.expectEqual(@as(f32, 24), close.width);
     try std.testing.expectEqual(@as(f32, 24), close.height);
     try std.testing.expectEqual(
+        @as(f32, 36),
+        context.getElementData(header_id).bounding_box.height,
+    );
+    try std.testing.expectEqual(
         zlay.debug_view_accessibility_theme.muted_text_color,
         context.getDebugViewTheme().muted_text_color,
     );
+    try std.testing.expect(contrastRatio(
+        zlay.debug_view_accessibility_theme.muted_text_color,
+        zlay.debug.color_1,
+    ) >= 4.5);
+    try std.testing.expect(contrastRatio(
+        zlay.debug_view_accessibility_theme.muted_text_color,
+        zlay.debug.color_2,
+    ) >= 4.5);
+
+    var found_title = false;
+    var command_index: i32 = 0;
+    while (context.renderCommand(command_index)) |command| : (command_index += 1) {
+        if (command.command_type != .text) continue;
+        const text = command.render_data.text;
+        if (!std.mem.eql(u8, text.string_contents.asSlice(), "Clay Debug Tools")) continue;
+        found_title = true;
+        try std.testing.expectEqual(@as(u16, 18), text.font_size);
+        break;
+    }
+    try std.testing.expect(found_title);
 
     var invalid_sizes = zlay.debug_view_default_theme;
+    invalid_sizes.font_size = 0;
+    invalid_sizes.row_height = 1;
     invalid_sizes.tree_control_size = 0;
     invalid_sizes.close_control_size = std.math.maxInt(u8);
     context.setDebugViewTheme(invalid_sizes);
+    try std.testing.expectEqual(@as(u16, 8), context.getDebugViewTheme().font_size);
+    try std.testing.expectEqual(@as(u8, 30), context.getDebugViewTheme().row_height);
     try std.testing.expectEqual(@as(u8, 1), context.getDebugViewTheme().tree_control_size);
     try std.testing.expectEqual(@as(u8, 30), context.getDebugViewTheme().close_control_size);
 }

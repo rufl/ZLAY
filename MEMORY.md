@@ -7,8 +7,10 @@
 - The optional paragraph-provider seam carries advanced shaping state and
   generation-bound render leases without selecting a font library.
 - The compiled mock provider demonstrates that seam, and the built-in inspector
-  has an opt-in higher-contrast, larger-target theme while retaining pinned
-  defaults.
+  has an opt-in higher-contrast, larger-type, roomier-row theme while retaining
+  pinned defaults.
+- Push/PR CI runs the bounded C-free check; a separate read-only manual/weekly
+  workflow runs the complete aggregate matrix.
 - Maintained local gate: `zig build verify-all` with Zig 0.16.0.
 - The only open proof item is physical AArch64 target-default hash execution;
   the 2026-07-31 QEMU 11.0.3 refresh passes 206/207 module tests plus 4/4

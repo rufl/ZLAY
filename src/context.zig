@@ -568,19 +568,25 @@ pub const Context = struct {
     pub fn setDebugViewTheme(self: *Context, theme: debug_inspector.Theme) void {
         if (self.application_callback_phase != .none) return;
         self.debug_theme = theme;
-        self.debug_theme.tree_control_size = @max(
+        self.debug_theme.font_size = std.math.clamp(self.debug_theme.font_size, 8, 48);
+        self.debug_theme.tree_control_size = std.math.clamp(
+            self.debug_theme.tree_control_size,
             1,
-            @min(
-                self.debug_theme.tree_control_size,
-                @as(u8, @intCast(debug_inspector.row_height)),
-            ),
+            30,
         );
-        self.debug_theme.close_control_size = @max(
+        self.debug_theme.close_control_size = std.math.clamp(
+            self.debug_theme.close_control_size,
             1,
-            @min(
-                self.debug_theme.close_control_size,
-                @as(u8, @intCast(debug_inspector.row_height)),
-            ),
+            30,
+        );
+        const content_height = @max(
+            @as(u8, @intCast(self.debug_theme.font_size)),
+            @max(self.debug_theme.tree_control_size, self.debug_theme.close_control_size),
+        );
+        self.debug_theme.row_height = std.math.clamp(
+            self.debug_theme.row_height,
+            content_height,
+            64,
         );
     }
 
@@ -1732,9 +1738,13 @@ pub const Context = struct {
     fn debugTextConfig(self: *const Context, offscreen: bool, title: bool) types.TextElementConfig {
         return .{
             .text_color = if (offscreen or title) self.debug_theme.muted_text_color else self.debug_theme.text_color,
-            .font_size = 16,
+            .font_size = self.debug_theme.font_size,
             .wrap_mode = .none,
         };
+    }
+
+    fn debugRowHeight(self: *const Context) f32 {
+        return @floatFromInt(self.debug_theme.row_height);
     }
 
     fn debugTextLiteral(self: *Context, comptime value: []const u8, config: types.TextElementConfig) !void {
@@ -1777,7 +1787,7 @@ pub const Context = struct {
         const offscreen = debug_inspector.isOffscreen(self.debugBoundingBox(node), self.layout_dimensions, self.culling_enabled);
         const row_id = hashes.stringWithOffset(types.String.literal("Clay__DebugView_ElementOuter"), node.element_id.id, 0);
         try self.openElementWithId(row_id, .{ .layout = .{
-            .sizing = .{ .height = types.fixed(@floatFromInt(debug_inspector.row_height)) },
+            .sizing = .{ .height = types.fixed(self.debugRowHeight()) },
             .child_gap = 6,
             .child_alignment = .{ .y = .center },
         } });
@@ -1864,7 +1874,7 @@ pub const Context = struct {
         const config = self.debugTextConfig(offscreen, false);
 
         try self.openElement(.{ .layout = .{
-            .sizing = .{ .height = types.fixed(@floatFromInt(debug_inspector.row_height)) },
+            .sizing = .{ .height = types.fixed(self.debugRowHeight()) },
             .child_alignment = .{ .y = .center },
         } });
         try self.openElement(.{ .layout = .{ .sizing = .{ .width = types.fixed(debug_inspector.indent_width + 16) } } });
@@ -1901,7 +1911,7 @@ pub const Context = struct {
         try self.openElementWithId(inner_id, .{
             .layout = .{ .sizing = .{
                 .width = types.grow(),
-                .height = types.fixed(@floatFromInt(debug_inspector.row_height)),
+                .height = types.fixed(self.debugRowHeight()),
             } },
             .border = .{ .color = debug_inspector.color_3, .width = .{ .top = 1 } },
         });
@@ -1978,10 +1988,11 @@ pub const Context = struct {
         try self.debugTextLiteral(" }", config);
         try self.openElement(.{ .layout = .{ .sizing = .{ .width = types.fixed(10) } } });
         try self.closeElement();
+        const swatch_size = @max(self.debugRowHeight() - 8, 1);
         try self.openElement(.{
             .layout = .{ .sizing = .{
-                .width = types.fixed(debug_inspector.row_height - 8),
-                .height = types.fixed(debug_inspector.row_height - 8),
+                .width = types.fixed(swatch_size),
+                .height = types.fixed(swatch_size),
             } },
             .background_color = color,
             .corner_radius = types.cornerRadius(4),
@@ -2026,7 +2037,7 @@ pub const Context = struct {
             .border = .{ .color = debug_inspector.color_3, .width = .{ .between_children = 1 } },
         });
         try self.openElement(.{ .layout = .{
-            .sizing = .{ .width = types.grow(), .height = types.fixed(debug_inspector.row_height + 8) },
+            .sizing = .{ .width = types.grow(), .height = types.fixed(self.debugRowHeight() + 8) },
             .padding = .{ .left = debug_inspector.outer_padding, .right = debug_inspector.outer_padding },
             .child_alignment = .{ .y = .center },
         } });
@@ -2301,7 +2312,7 @@ pub const Context = struct {
             .clip = .{ .horizontal = true, .vertical = true, .child_offset = scroll_offset },
         });
         try self.openElementWithId(hashes.string(types.String.literal("Clay__DebugViewWarningItemHeader"), 0), .{ .layout = .{
-            .sizing = .{ .height = types.fixed(debug_inspector.row_height) },
+            .sizing = .{ .height = types.fixed(self.debugRowHeight()) },
             .padding = .{ .left = debug_inspector.outer_padding, .right = debug_inspector.outer_padding },
             .child_gap = 8,
             .child_alignment = .{ .y = .center },
@@ -2315,7 +2326,7 @@ pub const Context = struct {
         try self.closeElement();
         for (self.debug_warnings.items, 0..) |warning, index| {
             try self.openElementWithId(hashes.stringWithOffset(types.String.literal("Clay__DebugViewWarningItem"), @intCast(index), 0), .{ .layout = .{
-                .sizing = .{ .height = types.fixed(debug_inspector.row_height) },
+                .sizing = .{ .height = types.fixed(self.debugRowHeight()) },
                 .padding = .{ .left = debug_inspector.outer_padding, .right = debug_inspector.outer_padding },
                 .child_gap = 8,
                 .child_alignment = .{ .y = .center },
@@ -2353,14 +2364,16 @@ pub const Context = struct {
             self.layout_dimensions.width,
             self.debug_view_width,
         );
-        const details_height = debug_inspector.effectiveDetailsHeight(
+        const details_height = debug_inspector.effectiveDetailsHeightForRow(
             self.layout_dimensions.height,
+            self.debugRowHeight(),
         );
         const highlighted_row = debug_inspector.highlightedRow(.{
             .pointer = self.pointer_info.position,
             .layout_dimensions = self.layout_dimensions,
             .view_width = view_width,
             .details_pane_height = details_height,
+            .row_height = self.debugRowHeight(),
             .scroll_position = scroll_offset,
             .external_scroll_handling_enabled = self.external_scroll_handling_enabled,
         });
@@ -2407,7 +2420,7 @@ pub const Context = struct {
         });
         try self.openElement(.{
             .layout = .{
-                .sizing = .{ .width = types.grow(), .height = types.fixed(debug_inspector.row_height) },
+                .sizing = .{ .width = types.grow(), .height = types.fixed(self.debugRowHeight()) },
                 .padding = .{ .left = debug_inspector.outer_padding, .right = debug_inspector.outer_padding },
                 .child_alignment = .{ .y = .center },
             },
@@ -2523,7 +2536,7 @@ pub const Context = struct {
                 .layout = .{
                     .sizing = .{
                         .width = types.grow(),
-                        .height = types.fixed(@floatFromInt(debug_inspector.row_height)),
+                        .height = types.fixed(self.debugRowHeight()),
                     },
                     .layout_direction = .top_to_bottom,
                 },

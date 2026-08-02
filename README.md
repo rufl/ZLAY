@@ -189,9 +189,10 @@ Pointer hit testing and hover callbacks use geometry retained from the most
 recent completed frame. Stable explicit IDs are therefore recommended for
 interactive, queried, scrolled, or transitioned elements.
 
-The built-in inspector keeps pinned colors and control sizes by default. Apps
-that prioritize debug-tool accessibility can opt into higher-contrast secondary
-text and 24-pixel tree/close targets without changing application UI:
+The built-in inspector keeps pinned colors, 16-pixel text, and 30-pixel rows by
+default. Apps that prioritize debug-tool accessibility can opt into
+higher-contrast secondary text, 18-pixel type, 36-pixel rows, and 24-pixel
+tree/close targets without changing application UI:
 
 ```zig
 context.setDebugViewTheme(zlay.debug_view_accessibility_theme);
@@ -309,6 +310,9 @@ then runs the C-free native/WebAssembly check in ReleaseFast and ReleaseSmall
 and certifies accountable pinned-Clay source coverage. Each nested mode uses a
 separate local Zig cache so one build cannot evict another mode's pending run
 artifacts.
+The read-only GitHub Actions `verify-all` workflow exposes the same aggregate
+gate manually and runs it weekly so the expensive matrix does not slow every
+push or pull request.
 It format-checks the Zig sources, runs the native suite, compiles the examples and
 `wasm32-freestanding` library target, executes the same renderer smoke natively
 and through Node's WebAssembly runtime, verifies the pinned `clay.h` digest,

@@ -11,6 +11,8 @@ canonical source URL.
 1. Start from a reviewed, clean commit with `/usr/bin/zig` 0.16.x.
 2. Run `/usr/bin/zig build verify-all --summary all`. This includes the basic,
    renderer, consumer, and mock paragraph-provider examples.
+   When a canonical remote exists, also run the read-only `verify-all` workflow
+   from the candidate commit and retain its hosted result.
 3. Run `gitleaks dir --redact --no-banner .` and validate the read-only CI file
    with `actionlint .github/workflows/check.yml`.
 4. Change `build.zig.zon` from `0.1.0-dev` to the selected release version and
@@ -40,7 +42,8 @@ the proof.
 ## Publication
 
 1. Confirm the hosted archive bytes produce the reviewed package hash.
-2. Confirm the repository CI run passes from the release commit.
+2. Confirm both the push/PR `check` job and manual `verify-all` workflow pass
+   from the release commit.
 3. Create the signed release tag and publish the changelog/release notes.
 4. Re-run the URL consumer against the immutable tag archive.
 5. Record the tag, archive URL, package hash, and CI run in `BACKLOG_ARCHIVE.md`,

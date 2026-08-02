@@ -29,6 +29,8 @@ pub const default_highlight_color = types.Color{ .r = 168, .g = 66, .b = 28, .a 
 pub const Theme = struct {
     text_color: types.Color = color_4,
     muted_text_color: types.Color = color_3,
+    font_size: u16 = 16,
+    row_height: u8 = 30,
     tree_control_size: u8 = 16,
     close_control_size: u8 = 20,
 };
@@ -36,6 +38,8 @@ pub const Theme = struct {
 pub const default_theme = Theme{};
 pub const accessibility_theme = Theme{
     .muted_text_color = .{ .r = 214, .g = 204, .b = 208, .a = 255 },
+    .font_size = 18,
+    .row_height = 36,
     .tree_control_size = 24,
     .close_control_size = 24,
 };
@@ -139,6 +143,7 @@ pub const HighlightInput = struct {
     layout_dimensions: types.Dimensions,
     view_width: f32 = @floatFromInt(default_view_width),
     details_pane_height: f32 = @floatFromInt(details_height),
+    row_height: f32 = @floatFromInt(row_height),
     scroll_position: ?types.Vector2 = null,
     external_scroll_handling_enabled: bool = false,
 };
@@ -152,8 +157,10 @@ pub fn highlightedRow(input: HighlightInput) i32 {
         !std.math.isFinite(input.layout_dimensions.height) or
         !std.math.isFinite(input.view_width) or
         !std.math.isFinite(input.details_pane_height) or
+        !std.math.isFinite(input.row_height) or
         input.view_width < 0 or
-        input.details_pane_height < 0)
+        input.details_pane_height < 0 or
+        input.row_height <= 0)
     {
         return -1;
     }
@@ -172,7 +179,7 @@ pub fn highlightedRow(input: HighlightInput) i32 {
     if (!pointer_in_debug_view) return -1;
     if (input.pointer.x < input.layout_dimensions.width - input.view_width) return -1;
 
-    const row_float = (input.pointer.y - scroll_y_offset) / @as(f32, @floatFromInt(row_height));
+    const row_float = (input.pointer.y - scroll_y_offset) / input.row_height;
     const minimum: f32 = @floatFromInt(std.math.minInt(i32));
     const maximum: f32 = @floatFromInt(std.math.maxInt(i32));
     if (!std.math.isFinite(row_float) or row_float <= minimum or row_float >= maximum) return -1;
@@ -201,8 +208,13 @@ pub fn effectiveViewWidth(layout_width: f32, configured_width: u32) f32 {
 }
 
 pub fn effectiveDetailsHeight(layout_height: f32) f32 {
+    return effectiveDetailsHeightForRow(layout_height, @floatFromInt(row_height));
+}
+
+pub fn effectiveDetailsHeightForRow(layout_height: f32, configured_row_height: f32) f32 {
     if (!std.math.isFinite(layout_height) or layout_height <= 0) return 0;
-    const minimum_list_height: f32 = @floatFromInt(row_height * 2 + 2);
+    if (!std.math.isFinite(configured_row_height) or configured_row_height <= 0) return 0;
+    const minimum_list_height = configured_row_height * 2 + 2;
     return @min(
         @as(f32, @floatFromInt(details_height)),
         @max(layout_height - minimum_list_height, 0),
@@ -473,11 +485,15 @@ test "debug constants and config labels match the pinned inspector" {
     try std.testing.expectEqual(types.Color{ .r = 105, .g = 210, .b = 231, .a = 255 }, configLabel(.text).color);
     try std.testing.expectEqualStrings("Scroll", configLabel(.clip).label.asSlice());
     try std.testing.expectEqual(color_3, default_theme.muted_text_color);
+    try std.testing.expectEqual(@as(u16, 16), default_theme.font_size);
+    try std.testing.expectEqual(@as(u8, 30), default_theme.row_height);
     try std.testing.expectEqual(@as(u8, 16), default_theme.tree_control_size);
     try std.testing.expectEqual(
         types.Color{ .r = 214, .g = 204, .b = 208, .a = 255 },
         accessibility_theme.muted_text_color,
     );
+    try std.testing.expectEqual(@as(u16, 18), accessibility_theme.font_size);
+    try std.testing.expectEqual(@as(u8, 36), accessibility_theme.row_height);
     try std.testing.expectEqual(@as(u8, 24), accessibility_theme.close_control_size);
 }
 
@@ -691,6 +707,7 @@ test "debug dimensions stay usable in viewports smaller than the inspector defau
     try std.testing.expectEqual(@as(f32, 0), contentWidth(300, true, 400));
     try std.testing.expectEqual(@as(f32, 300), effectiveViewWidth(300, 400));
     try std.testing.expectEqual(@as(f32, 118), effectiveDetailsHeight(180));
+    try std.testing.expectEqual(@as(f32, 106), effectiveDetailsHeightForRow(180, 36));
     try std.testing.expectEqual(@as(f32, 0), effectiveDetailsHeight(40));
     try std.testing.expect(!isOffscreen(.{ .x = 100, .y = 100 }, .{ .width = 100, .height = 100 }, true));
     try std.testing.expect(isOffscreen(.{ .x = 100.01, .y = 0 }, .{ .width = 100, .height = 100 }, true));
