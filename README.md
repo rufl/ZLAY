@@ -16,6 +16,7 @@ inspector.
 | Physical AArch64 certification | Externally blocked: no qualifying runner or resulting artifact set is available in this checkout. |
 | Rendering and fonts | Application-owned by design; ZLAY emits commands and optional paragraph leases but does not rasterize. |
 | Maintained aggregate gate | `zig build verify-all` on Zig 0.16.0. |
+| First release candidate | `0.1.0` is locally finalized; publication remains blocked on the canonical remote, hosted CI, signing, and immutable URL proof. |
 | First release support scope | Verified native x86-64 Linux plus the maintained `wasm32-freestanding` compile and Node runtime smoke; AArch64 remains explicitly uncertified. |
 
 Raw coverage remains separate from behavioral equivalence. Other OS, browser,

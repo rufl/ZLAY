@@ -1,6 +1,6 @@
 # Release procedure
 
-ZLAY is still `0.1.0-dev`. The first release is scoped to verified native
+ZLAY `0.1.0` is locally finalized. The first release is scoped to verified native
 x86-64 Linux plus the maintained `wasm32-freestanding` compile and Node runtime
 smoke. Physical AArch64 certification remains separate ZL-202 work and does not
 block this scoped release. Publication still requires an owner-selected
@@ -15,8 +15,8 @@ canonical source URL.
    from the candidate commit and retain its hosted result.
 3. Run `gitleaks dir --redact --no-banner .` and validate the read-only CI file
    with `actionlint .github/workflows/check.yml`.
-4. Change `build.zig.zon` from `0.1.0-dev` to the selected release version and
-   finalize the matching changelog section.
+4. Confirm `build.zig.zon`, `src/root.zig`, and `CHANGELOG.md` all identify
+   `0.1.0`.
 5. Publish a source archive containing the paths listed by `build.zig.zon`.
 
 ## URL consumer proof
@@ -48,6 +48,18 @@ must still repeat that proof.
 4. Re-run the URL consumer against the immutable tag archive.
 5. Record the tag, archive URL, package hash, and CI run in `BACKLOG_ARCHIVE.md`,
    then close ZL-218.
+
+## 0.1.0 release notes
+
+- Supported: native x86-64 Linux and the maintained `wasm32-freestanding`
+  compile plus Node runtime smoke.
+- Included: dependency-free layout, interaction, scrolling, transitions,
+  renderer commands, checked renderer dispatch, advanced paragraph-provider
+  transport, fixed-buffer profiling, and the opt-in accessible inspector.
+- Application-owned: fonts, shaping/rasterization, graphics APIs, assets,
+  platform accessibility semantics, and final pixels.
+- Not certified by this release: physical AArch64 execution, other operating
+  systems, browsers, or concrete graphics/font backends.
 
 Physical AArch64 certification remains ZL-202. State the x86-64 Linux and
 freestanding-WebAssembly boundary in the release notes rather than implying

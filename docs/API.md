@@ -1,7 +1,7 @@
 # ZLAY API
 
 This reference describes the public API exported by `src/root.zig` at version
-`0.1.0-dev`. It is a native Zig API, not a C ABI. The behavioral baseline is
+`0.1.0`. It is a native Zig API, not a C ABI. The behavioral baseline is
 Clay commit `e6cc36941ab2af5d81107617039d6f527a1c660b`; the root module exports
 that value as `upstream_commit` and the pinned header digest as
 `upstream_header_sha256`. Unverified parity must not be inferred from similar

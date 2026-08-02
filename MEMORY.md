@@ -17,9 +17,10 @@
 - The only open proof item is physical AArch64 target-default hash execution;
   the 2026-08-02 QEMU 11.0.3 refresh passes 209/210 module tests plus 4/4
   manifest tests but remains supplemental and cannot close it.
-- The first package release does not wait for ZL-202: its documented support
+- The finalized `0.1.0` package candidate does not wait for ZL-202: its support
   boundary is native x86-64 Linux plus the maintained freestanding-WebAssembly
-  compile/runtime lanes.
+  compile/runtime lanes. Publication remains blocked on canonical remote,
+  hosted CI, signing, and immutable URL proof.
 
 ## Architecture Notes
 

@@ -6,6 +6,8 @@ All notable changes to ZLAY are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-02
+
 ### Added
 
 - Greenfield Zig 0.16 package and dependency-free `zlay` module definition.
@@ -200,8 +202,8 @@ All notable changes to ZLAY are recorded here. The format follows
 
 ### Changed
 
-- Refreshed local verification on 2026-07-31: the C-free check passes 26/26
-  steps and 210/210 combined tests. ZL-202 remains honestly blocked on physical
+- Refreshed local verification on 2026-08-02: the C-free check passes 28/28
+  steps and 214/214 combined tests. ZL-202 remains honestly blocked on physical
   non-emulated AArch64 evidence; no substitute implementation was added.
 - Clarified that repository tooling requires Python 3.10 or newer, exact-byte
   evidence import is mandatory for ZL-202 closure, and cache-managed runner

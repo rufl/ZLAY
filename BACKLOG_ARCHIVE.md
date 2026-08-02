@@ -35,6 +35,12 @@ and the smallest reproducible proof that justified closure.
 | ZL-225 | Removed the built-in inspector's pointer-only accessibility ceiling without choosing an input backend: applications can queue previous, next, collapse-toggle, and close intents; element navigation skips non-selectable rows, clamps at list ends, reveals offscreen selections under internal scrolling, and retries rather than losing input when a frame is rejected | `/usr/bin/zig build check --summary all` passes 28/28 steps and 214/214 tests; `/usr/bin/zig build parity --summary all` preserves all 25 ordinary C/Zig traces and exact default inspector output; `/usr/bin/zig build verify-all --summary all` passes 8/8 aggregate steps; current-source QEMU passes 16/16 steps, 209/210 module tests with the exact x86-only skip, and 4/4 manifest tests. |
 | ZL-226 | Completed the inspector accessibility adapter boundary with a compact read-only committed state query: enabled state, selected element ID, selected row, and row count are available to assistive announcements, remote control, and external-scroll adapters without exposing mutable row storage or claiming platform semantics | `/usr/bin/zig build check --summary all` passes 28/28 steps and 214/214 tests; `/usr/bin/zig build parity --summary all` preserves all 25 ordinary C/Zig traces; `/usr/bin/zig build verify-all --summary all` passes 8/8 aggregate steps; current-source QEMU passes 16/16 steps, 209/210 module tests with the exact x86-only skip, and 4/4 manifest tests. |
 
+## 2026-08-02 — 0.1.0 release candidate
+
+| ID | Completed work | Proof |
+|---|---|---|
+| ZL-227 | Froze the first supported package candidate at `0.1.0`, aligned package metadata and the public version constant, finalized the changelog and bounded release notes, and updated support/security/version documentation without implying hosted publication or physical AArch64 certification | `/usr/bin/zig build check --summary all` passes 28/28 steps and 214/214 tests; `/usr/bin/zig build parity --summary all` preserves all 25 ordinary C/Zig traces; `/usr/bin/zig build verify-all --summary all` passes 8/8 aggregate steps; `.overzeer/release-smoke.md` records the passing isolated `file://` archive consumer and final package hash; current-source QEMU passes 16/16 steps with the expected non-certifying skip policy. |
+
 ## 2026-07-13 — repository foundation
 
 | ID | Completed work | Proof |

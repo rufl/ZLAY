@@ -30,7 +30,9 @@ sources do not compile or call that header.
 
 Lower-level modules remain exported for tests and advanced consumers, but
 normal applications should enter through `zlay.Context` and the root aliases.
-Internal module APIs may move while the package is `0.1.0-dev`.
+Internal module APIs are not covered by semantic-version compatibility; the
+supported application surface is the root `zlay` module documented in
+`docs/API.md`.
 
 ## State and ownership
 

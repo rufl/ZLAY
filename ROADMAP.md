@@ -13,8 +13,8 @@
 
 ## Next
 
-- Select the canonical release URL, remove the development version suffix,
-  verify a clean hosted-URL consumer, and tag the x86-64 Linux plus
+- Select the canonical release URL, verify a clean hosted-URL consumer, and
+  sign/tag the finalized `0.1.0` x86-64 Linux plus
   freestanding-WebAssembly release using `docs/RELEASE.md`.
 - Integrate a concrete shaping/raster backend only when an application selects
   one and can supply runtime fixtures for fallback, bidirectional text,

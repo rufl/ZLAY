@@ -2,7 +2,7 @@
 
 ## Supported Surface
 
-Security fixes target the current `0.1.0-dev` branch. ZLAY is a local library:
+Security fixes target the current `0.1.x` line. ZLAY is a local library:
 it opens no sockets, performs no telemetry or update checks, and stores no
 credentials. Applications remain responsible for validating external font,
 image, and custom-renderer inputs before passing opaque handles to ZLAY.
