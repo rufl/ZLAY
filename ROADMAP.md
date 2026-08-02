@@ -8,6 +8,8 @@
   that local aggregate gate.
 - Keep renderer and paragraph-provider contracts allocation-safe, bounded, and
   independent of any concrete graphics or font dependency.
+- Keep inspector pointer and renderer-neutral action input on one transactional
+  frame boundary while preserving pinned default output.
 
 ## Next
 

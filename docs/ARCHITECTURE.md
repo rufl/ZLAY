@@ -68,7 +68,10 @@ frame's hit testing.
 Inspector presentation is context-local. The default `debug.Theme` preserves
 the pinned output exactly; the optional accessibility preset changes only debug
 text contrast, font size, row density, and tree/close target sizes. Theme
-normalization keeps rows tall enough for their text and controls.
+normalization keeps rows tall enough for their text and controls. A single
+queued `debug.Action` lets applications map non-pointer input without adding a
+platform dependency; selection, collapse, close, and internal reveal scrolling
+commit or roll back with the frame.
 
 All storage uses the allocator passed to `Context.init`. There is no implicit
 global context, hidden fallback allocator, or C allocation path. One context is

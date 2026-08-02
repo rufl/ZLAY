@@ -198,6 +198,18 @@ tree/close targets without changing application UI:
 context.setDebugViewTheme(zlay.debug_view_accessibility_theme);
 ```
 
+The inspector is not pointer-only. Consuming applications can map their own
+keyboard, gamepad, switch, or remote input to renderer-neutral intents before
+`beginLayout`:
+
+```zig
+context.setDebugViewAction(.select_next);
+```
+
+Previous/next navigation skips non-selectable rows and reveals the selection
+when internal scrolling is active. Toggle and close actions use the same
+failure-atomic frame commit as pointer interaction.
+
 Application hover, transition, external-scroll, text-measurement, and diagnostic
 callbacks may inspect context state, but frame/declaration/input mutation is
 guarded: fallible methods return `CallbackReentryNotAllowed`, recursive pointer
@@ -299,7 +311,7 @@ is a workload profiler, not a `Clay_MinMemorySize` equivalent.
 ## Verification and current limits
 
 The 2026-07-31 refresh reran the C-free `zig build check --summary all` gate:
-28/28 steps and 211/211 combined tests pass on Zig 0.16.0. Current-source Craft
+28/28 steps and 214/214 combined tests pass on Zig 0.16.0. Current-source Craft
 is clean and Slopometer is 0.0/10 after excluding immutable pinned oracle inputs
 without excluding owned source. No source-owned backlog row is actionable; ZL-202 still requires evidence from physical,
 non-emulated AArch64 hardware and must not be closed by local code or QEMU.
@@ -371,7 +383,7 @@ host. This optional rung is entirely outside raw-v1 capture, runner provenance,
 repository import, human review, and certification; it cannot close ZL-202 or
 replace execution on physical non-emulated AArch64 hardware.
 
-The 2026-07-31 current-source refresh passes 16/16 QEMU lane steps, 206/207
+The 2026-07-31 current-source refresh passes 16/16 QEMU lane steps, 209/210
 module tests with the one exact x86-only skip, 4/4 manifest tests, and the
 unchanged 18-line / 426-byte trace SHA-256
 `68b1ce5dfef146735d34889f337fa3f73a597b0511a5fc511f9e399d263dc787`.

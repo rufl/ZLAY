@@ -21,6 +21,7 @@ pub const Context = engine.Context;
 pub const ContextOptions = engine.Options;
 pub const ContextError = engine.Error;
 pub const DebugViewTheme = debug.Theme;
+pub const DebugViewAction = debug.Action;
 pub const debug_view_default_theme = debug.default_theme;
 pub const debug_view_accessibility_theme = debug.accessibility_theme;
 

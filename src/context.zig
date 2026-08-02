@@ -347,6 +347,7 @@ pub const Context = struct {
     debug_view_width: u32 = debug_inspector.default_view_width,
     debug_highlight_color: types.Color = debug_inspector.default_highlight_color,
     debug_theme: debug_inspector.Theme = debug_inspector.default_theme,
+    debug_view_action: ?debug_inspector.Action = null,
     debug_warnings_enabled: bool = false,
     external_scroll_handling_enabled: bool = false,
     apply_transition_overrides: bool = false,
@@ -592,6 +593,15 @@ pub const Context = struct {
 
     pub fn getDebugViewTheme(self: *const Context) debug_inspector.Theme {
         return self.debug_theme;
+    }
+
+    /// Queue one renderer-neutral inspector action for the next successful
+    /// frame. A later call replaces the queued action; rejected frames retain
+    /// it so input is not lost.
+    pub fn setDebugViewAction(self: *Context, action: debug_inspector.Action) void {
+        if (self.application_callback_phase != .none or self.layout_open) return;
+        if (!self.debug_mode_enabled) return;
+        self.debug_view_action = action;
     }
 
     pub fn setCullingEnabled(self: *Context, enabled: bool) void {
@@ -2342,7 +2352,13 @@ pub const Context = struct {
     /// delimit the user's tree (plus any reinserted exit roots), preventing
     /// the inspector from recursively inspecting its own declarations.
     fn renderDebugView(self: *Context, initial_roots_length: usize, initial_elements_length: usize) !bool {
-        if (debug_inspector.closeRequested(self.pointer_info.state, self.pointer_over_ids.items)) {
+        const action_requests_close = if (self.debug_view_action) |action|
+            action == .close
+        else
+            false;
+        if (action_requests_close or
+            debug_inspector.closeRequested(self.pointer_info.state, self.pointer_over_ids.items))
+        {
             self.pending_debug_mode_enabled = false;
             return false;
         }
@@ -2359,7 +2375,8 @@ pub const Context = struct {
         try self.debug_dynamic_strings.ensureTotalCapacity(self.allocator, dynamic_capacity);
 
         const scroll_id = hashes.string(types.String.literal("Clay__DebugViewOuterScrollPane"), 0);
-        const scroll_offset = self.getScrollOffsetForId(scroll_id.id);
+        var scroll_offset = self.getScrollOffsetForId(scroll_id.id);
+        var reveal_selection = false;
         const view_width = debug_inspector.effectiveViewWidth(
             self.layout_dimensions.width,
             self.debug_view_width,
@@ -2368,7 +2385,7 @@ pub const Context = struct {
             self.layout_dimensions.height,
             self.debugRowHeight(),
         );
-        const highlighted_row = debug_inspector.highlightedRow(.{
+        var highlighted_row = debug_inspector.highlightedRow(.{
             .pointer = self.pointer_info.position,
             .layout_dimensions = self.layout_dimensions,
             .view_width = view_width,
@@ -2377,7 +2394,7 @@ pub const Context = struct {
             .scroll_position = scroll_offset,
             .external_scroll_handling_enabled = self.external_scroll_handling_enabled,
         });
-        const list_data = try debug_inspector.collectRows(
+        var list_data = try debug_inspector.collectRows(
             self.allocator,
             self.nodes.items[0..initial_elements_length],
             self.child_indices.items,
@@ -2390,6 +2407,33 @@ pub const Context = struct {
             &self.debug_rows,
             &self.debug_traversal,
         );
+        if (self.debug_view_action) |action| {
+            if (debug_inspector.movedSelection(
+                self.debug_rows.items,
+                list_data.selected_element_id,
+                action,
+            )) |selection| {
+                list_data.selected_element_id = selection.element_id;
+                list_data.selected_element_row_index = selection.row_index;
+                list_data.highlighted_element_id = selection.element_id;
+                highlighted_row = selection.row_index;
+                if (!self.external_scroll_handling_enabled) {
+                    const list_view_height = @max(
+                        self.layout_dimensions.height - self.debugRowHeight() -
+                            details_height - 2,
+                        0,
+                    );
+                    scroll_offset.y = debug_inspector.revealRowScrollY(
+                        scroll_offset.y,
+                        selection.row_index,
+                        list_data.row_count,
+                        self.debugRowHeight(),
+                        list_view_height,
+                    );
+                    reveal_selection = true;
+                }
+            }
+        }
         self.pending_debug_selected_element_id = list_data.selected_element_id;
         const selected_index = if (self.id_to_index.get(list_data.selected_element_id)) |index|
             if (index < initial_elements_length) index else null
@@ -2457,6 +2501,14 @@ pub const Context = struct {
             .layout = .{ .sizing = .{ .width = types.grow(), .height = types.grow() } },
             .clip = .{ .horizontal = true, .vertical = true, .child_offset = scroll_offset },
         });
+        if (reveal_selection) {
+            for (self.scroll_containers.items) |*container| {
+                if (container.id != scroll_id.id) continue;
+                container.scroll_position = scroll_offset;
+                container.scroll_momentum = .{};
+                break;
+            }
+        }
         try self.openElement(.{
             .layout = .{
                 .sizing = .{ .width = types.grow(), .height = types.grow() },
@@ -2519,6 +2571,14 @@ pub const Context = struct {
         // clicks affect the following frame's row set rather than this one.
         if (debug_inspector.collapseTarget(self.pointer_info.state, self.pointer_over_ids.items)) |target_id| {
             self.pending_debug_collapse_id = target_id;
+        }
+        if (self.debug_view_action == .toggle_collapse) {
+            if (selected_index) |index| {
+                const selected_node = self.nodes.items[index];
+                if (!selected_node.is_text and selected_node.children_len > 0) {
+                    self.pending_debug_collapse_id = selected_node.element_id.id;
+                }
+            }
         }
         try self.emitDebugHighlight(list_data.highlighted_element_id);
         try self.closeElement();
@@ -3848,6 +3908,7 @@ pub const Context = struct {
             }
         }
         self.pending_debug_collapse_id = null;
+        self.debug_view_action = null;
     }
 
     fn updateTransitions(self: *Context, delta_time: f32) !bool {

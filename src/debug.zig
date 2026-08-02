@@ -44,6 +44,18 @@ pub const accessibility_theme = Theme{
     .close_control_size = 24,
 };
 
+pub const Action = enum(u8) {
+    select_previous,
+    select_next,
+    toggle_collapse,
+    close,
+};
+
+pub const Selection = struct {
+    element_id: u32,
+    row_index: i32,
+};
+
 pub const ConfigType = enum(u8) {
     background_color,
     overlay_color,
@@ -272,6 +284,82 @@ pub const Row = struct {
     element_index: ?usize = null,
     element_id: u32 = 0,
 };
+
+pub fn movedSelection(rows: []const Row, selected_element_id: u32, action: Action) ?Selection {
+    if (action != .select_previous and action != .select_next) return null;
+
+    var first_index: ?usize = null;
+    var last_index: ?usize = null;
+    var selected_index: ?usize = null;
+    for (rows, 0..) |row, index| {
+        if (row.kind != .element) continue;
+        if (first_index == null) first_index = index;
+        last_index = index;
+        if (row.element_id == selected_element_id) selected_index = index;
+    }
+
+    var target_index: ?usize = null;
+    if (action == .select_next) {
+        if (selected_index) |current_index| {
+            var index = current_index + 1;
+            while (index < rows.len) : (index += 1) {
+                if (rows[index].kind == .element) {
+                    target_index = index;
+                    break;
+                }
+            }
+            if (target_index == null) target_index = selected_index;
+        } else {
+            target_index = first_index;
+        }
+    } else if (selected_index) |current_index| {
+        var index = current_index;
+        while (index > 0) {
+            index -= 1;
+            if (rows[index].kind == .element) {
+                target_index = index;
+                break;
+            }
+        }
+        if (target_index == null) target_index = selected_index;
+    } else {
+        target_index = last_index;
+    }
+
+    const row = rows[target_index orelse return null];
+    return .{ .element_id = row.element_id, .row_index = row.row_index };
+}
+
+pub fn revealRowScrollY(
+    current_scroll_y: f32,
+    row_index: i32,
+    row_count: i32,
+    configured_row_height: f32,
+    viewport_height: f32,
+) f32 {
+    if (!std.math.isFinite(current_scroll_y) or
+        !std.math.isFinite(configured_row_height) or
+        !std.math.isFinite(viewport_height) or
+        row_index < 0 or
+        row_count <= 0 or
+        configured_row_height <= 0 or
+        viewport_height <= 0)
+    {
+        return 0;
+    }
+
+    const content_height = @as(f32, @floatFromInt(row_count)) * configured_row_height;
+    const scroll_extent = @max(content_height - viewport_height, 0);
+    var visible_top = std.math.clamp(-current_scroll_y, 0, scroll_extent);
+    const row_top = @as(f32, @floatFromInt(row_index)) * configured_row_height;
+    const row_bottom = row_top + configured_row_height;
+    if (row_top < visible_top) {
+        visible_top = row_top;
+    } else if (row_bottom > visible_top + viewport_height) {
+        visible_top = row_bottom - viewport_height;
+    }
+    return -std.math.clamp(visible_top, 0, scroll_extent);
+}
 
 pub const ListResult = struct {
     row_count: i32 = 0,
@@ -700,6 +788,27 @@ test "configuration pane enum names preserve pinned spellings" {
     try std.testing.expectEqualStrings("PASSTHROUGH", pointerCaptureModeName(.passthrough));
     try std.testing.expectEqualStrings("ELEMENT_WITH_ID", attachToName(.element_with_id));
     try std.testing.expectEqualStrings("ATTACHED_PARENT", clipToName(.attached_parent));
+}
+
+test "debug actions navigate only element rows and clamp at list ends" {
+    const rows = [_]Row{
+        .{ .kind = .element, .row_index = 0, .root_index = 0, .depth = 0, .element_id = 10 },
+        .{ .kind = .text_contents, .row_index = 1, .root_index = 0, .depth = 1, .element_id = 10 },
+        .{ .kind = .root_separator, .row_index = 2, .root_index = 1, .depth = 0 },
+        .{ .kind = .element, .row_index = 3, .root_index = 1, .depth = 0, .element_id = 20 },
+    };
+
+    try std.testing.expectEqual(Selection{ .element_id = 10, .row_index = 0 }, movedSelection(&rows, 0, .select_next).?);
+    try std.testing.expectEqual(Selection{ .element_id = 20, .row_index = 3 }, movedSelection(&rows, 10, .select_next).?);
+    try std.testing.expectEqual(Selection{ .element_id = 20, .row_index = 3 }, movedSelection(&rows, 20, .select_next).?);
+    try std.testing.expectEqual(Selection{ .element_id = 20, .row_index = 3 }, movedSelection(&rows, 0, .select_previous).?);
+    try std.testing.expectEqual(Selection{ .element_id = 10, .row_index = 0 }, movedSelection(&rows, 20, .select_previous).?);
+    try std.testing.expect(movedSelection(&rows, 10, .close) == null);
+
+    try std.testing.expectEqual(@as(f32, 0), revealRowScrollY(0, 0, 10, 30, 90));
+    try std.testing.expectEqual(@as(f32, -30), revealRowScrollY(0, 3, 10, 30, 90));
+    try std.testing.expectEqual(@as(f32, -210), revealRowScrollY(-210, 9, 10, 30, 90));
+    try std.testing.expectEqual(@as(f32, -60), revealRowScrollY(-120, 2, 10, 30, 90));
 }
 
 test "debug dimensions stay usable in viewports smaller than the inspector defaults" {

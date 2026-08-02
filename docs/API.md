@@ -104,6 +104,7 @@ Configuration methods:
 | `setDebugViewWidth(u32)` / `getDebugViewWidth()` | Override/read the default 400-pixel inspector width for following frames. |
 | `setDebugViewHighlightColor(Color)` / `getDebugViewHighlightColor()` | Override/read the translucent element-highlight color. |
 | `setDebugViewTheme(DebugViewTheme)` / `getDebugViewTheme()` | Override/read inspector text colors, font size, row height, and tree/close target sizes. Defaults preserve pinned output. Font size clamps to 8–48 pixels, controls to 1–30 pixels, and rows to their largest content size through 64 pixels. |
+| `setDebugViewAction(DebugViewAction)` | Queue one renderer-neutral `.select_previous`, `.select_next`, `.toggle_collapse`, or `.close` intent before `beginLayout`. Later calls replace the queued action; rejected frames retain it for retry. |
 | `setCullingEnabled(bool)` | Enable or disable viewport command culling. Enabled by default. |
 | `setExternalScrollHandlingEnabled(bool)` | Switch clipped children to application-supplied offsets instead of internal offsets. |
 | `getMaxElementCount()` / `setMaxElementCount(count)` | Query/change the element declaration limit. The setter clamps values above `maxInt(i32)`. Pointer-array capacity is persistent like Clay's initialization-time allocation: raising the limit can grow it, while lowering the limit never reports a capacity below an already published hit count. |
@@ -145,6 +146,21 @@ For a higher-contrast inspector with 18-pixel text, 36-pixel rows, and
 context.setDebugViewTheme(zlay.debug_view_accessibility_theme);
 ```
 
+Applications can map keyboard, gamepad, switch, or remote-control input without
+making ZLAY depend on a platform input API:
+
+```zig
+if (input.down_pressed) context.setDebugViewAction(.select_next);
+if (input.up_pressed) context.setDebugViewAction(.select_previous);
+if (input.activate_pressed) context.setDebugViewAction(.toggle_collapse);
+if (input.dismiss_pressed) context.setDebugViewAction(.close);
+```
+
+Queue at most one action before `beginLayout`; a later call intentionally wins.
+Selection skips text-preview and root-separator rows, clamps at list ends, and
+keeps the selected row visible when ZLAY owns scrolling. With external scroll
+handling enabled, the application remains responsible for revealing it.
+
 The default theme remains bit-compatible with the pinned inspector. A custom
 theme changes only inspector presentation; application layout and commands
 outside the debug view are unaffected.
@@ -153,7 +169,8 @@ The inspector uses the application's measurement callback with font ID zero.
 Pointer hit testing still consumes the prior completed frame: call
 `setPointerState` before declaration as usual, then advance the same persistent
 context so row selection, collapse, close, and inspector scrolling retain
-state. Inspector declarations count against `max_element_count` and can grow
+state. Pointer and renderer-neutral action input share the same transactional
+commit boundary. Inspector declarations count against `max_element_count` and can grow
 allocator usage; leave headroom beyond the application's largest user tree.
 
 `MeasureTextFunction` has this shape:

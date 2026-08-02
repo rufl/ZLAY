@@ -39,6 +39,23 @@ fn renderClippedUserTree(context: *zlay.Context, parent_id: zlay.ElementId, chil
     _ = try context.endLayout(0);
 }
 
+fn renderManyUserRows(context: *zlay.Context, child_count: usize) !void {
+    try context.beginLayout();
+    try context.openElementWithId(
+        context.id("action-list"),
+        fixedBox(200, 100, .{ .r = 30, .g = 60, .b = 90, .a = 255 }),
+    );
+    for (0..child_count) |index| {
+        try context.openElementWithId(
+            context.indexedId("action-row", @intCast(index)),
+            fixedBox(50, 30, .{ .r = 90, .g = 60, .b = 30, .a = 255 }),
+        );
+        try context.closeElement();
+    }
+    try context.closeElement();
+    _ = try context.endLayout(0);
+}
+
 fn expectBoxEqual(expected: zlay.BoundingBox, actual: zlay.BoundingBox) !void {
     try std.testing.expectApproxEqAbs(expected.x, actual.x, 0.01);
     try std.testing.expectApproxEqAbs(expected.y, actual.y, 0.01);
@@ -268,6 +285,76 @@ test "accessibility inspector theme increases readability and interactive target
     try std.testing.expectEqual(@as(u8, 30), context.getDebugViewTheme().row_height);
     try std.testing.expectEqual(@as(u8, 1), context.getDebugViewTheme().tree_control_size);
     try std.testing.expectEqual(@as(u8, 30), context.getDebugViewTheme().close_control_size);
+}
+
+test "renderer-neutral inspector actions navigate collapse retry and close" {
+    const render_capacity: usize = 512;
+    var context = zlay.Context.init(
+        std.testing.allocator,
+        .{ .width = 1000, .height = 600 },
+        .{ .max_render_command_count = render_capacity },
+    );
+    defer context.deinit();
+    context.setMeasureTextFunction(measureText, null);
+    context.setDebugModeEnabled(true);
+
+    const root_id = context.id("Clay__RootContainer");
+    const parent_id = context.id("action-parent");
+    const child_id = context.id("action-child");
+    try renderClippedUserTree(&context, parent_id, child_id);
+
+    context.setDebugViewAction(.select_next);
+    context.options.max_render_command_count = 2;
+    try std.testing.expectError(
+        error.RenderCommandCapacityExceeded,
+        renderClippedUserTree(&context, parent_id, child_id),
+    );
+    try std.testing.expectEqual(@as(u32, 0), context.debug_selected_element_id);
+
+    context.options.max_render_command_count = render_capacity;
+    try renderClippedUserTree(&context, parent_id, child_id);
+    try std.testing.expectEqual(root_id.id, context.debug_selected_element_id);
+
+    context.setDebugViewAction(.select_next);
+    try renderClippedUserTree(&context, parent_id, child_id);
+    try std.testing.expectEqual(parent_id.id, context.debug_selected_element_id);
+
+    context.setDebugViewAction(.toggle_collapse);
+    try renderClippedUserTree(&context, parent_id, child_id);
+    try std.testing.expect(containsElementRow(&context, child_id.id));
+    try renderClippedUserTree(&context, parent_id, child_id);
+    try std.testing.expect(!containsElementRow(&context, child_id.id));
+
+    context.setDebugViewAction(.select_previous);
+    try renderClippedUserTree(&context, parent_id, child_id);
+    try std.testing.expectEqual(root_id.id, context.debug_selected_element_id);
+
+    context.setDebugViewAction(.close);
+    try renderClippedUserTree(&context, parent_id, child_id);
+    try std.testing.expect(!context.isDebugModeEnabled());
+}
+
+test "inspector action navigation reveals offscreen selections" {
+    var context = zlay.Context.init(
+        std.testing.allocator,
+        .{ .width = 1000, .height = 600 },
+        .{},
+    );
+    defer context.deinit();
+    context.setMeasureTextFunction(measureText, null);
+    context.setDebugModeEnabled(true);
+
+    try renderManyUserRows(&context, 12);
+    for (0..12) |_| {
+        context.setDebugViewAction(.select_next);
+        try renderManyUserRows(&context, 12);
+    }
+
+    const scroll = context.getScrollContainerData(
+        context.id("Clay__DebugViewOuterScrollPane"),
+    );
+    try std.testing.expect(scroll.found);
+    try std.testing.expect(scroll.scroll_position.?.y < 0);
 }
 
 test "rejected inspector frames commit no selection collapse or close interaction" {

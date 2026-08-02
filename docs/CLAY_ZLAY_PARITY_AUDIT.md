@@ -39,7 +39,7 @@ Debug `aarch64-linux-musl` root tests, manifest tests, and the exact C/Zig trace
 with `qemu-aarch64 -cpu max`; its bound report and host-only mutation audit mark
 all certification, physical-machine-proof, and backlog-closure flags false.
 That supplemental emulator result is isolated from the physical evidence and
-review workflows. The current-source refresh passes 206/207 module tests with
+review workflows. The current-source refresh passes 209/210 module tests with
 the one exact x86-only skip, 4/4 manifest tests, and the unchanged 18-line /
 426-byte trace under QEMU 11.0.3.
 No real imported raw record, runner record, completed certification log, or

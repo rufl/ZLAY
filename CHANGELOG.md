@@ -64,6 +64,9 @@ All notable changes to ZLAY are recorded here. The format follows
 - An opt-in inspector accessibility theme with higher-contrast secondary text
   plus larger text, rows, and tree/close controls while preserving exact
   default output.
+- Renderer-neutral inspector previous/next/toggle/close actions for application-
+  mapped keyboard, gamepad, switch, or remote input, including internal
+  selection reveal and rejected-frame retry.
 - A read-only manual and weekly GitHub Actions workflow for the complete
   `verify-all` matrix, separate from the faster push/pull-request check.
 - Retained element queries, prior-frame pointer hit testing, hover callbacks,
@@ -237,7 +240,7 @@ All notable changes to ZLAY are recorded here. The format follows
   pane on short viewports, preserving usable list space and non-negative render
   geometry without changing ordinary 400-by-300 inspector output.
 - Refreshed the non-certifying AArch64 QEMU lane on current sources: 16/16
-  steps, 206/207 module tests with the exact x86-only skip, 4/4 manifest tests,
+  steps, 209/210 module tests with the exact x86-only skip, 4/4 manifest tests,
   and unchanged 18-line C/Zig target-default hash parity.
 - Isolated nested `verify-all` mode builds in distinct local caches, eliminating
   a reproduced shared-cache race that could remove native and WebAssembly smoke
