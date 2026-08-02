@@ -314,16 +314,24 @@ test "renderer-neutral inspector actions navigate collapse retry and close" {
     context.options.max_render_command_count = render_capacity;
     try renderClippedUserTree(&context, parent_id, child_id);
     try std.testing.expectEqual(root_id.id, context.debug_selected_element_id);
+    try std.testing.expectEqual(zlay.DebugViewState{
+        .enabled = true,
+        .selected_element_id = root_id.id,
+        .selected_row_index = 0,
+        .row_count = 3,
+    }, context.getDebugViewState());
 
     context.setDebugViewAction(.select_next);
     try renderClippedUserTree(&context, parent_id, child_id);
     try std.testing.expectEqual(parent_id.id, context.debug_selected_element_id);
+    try std.testing.expectEqual(@as(i32, 1), context.getDebugViewState().selected_row_index);
 
     context.setDebugViewAction(.toggle_collapse);
     try renderClippedUserTree(&context, parent_id, child_id);
     try std.testing.expect(containsElementRow(&context, child_id.id));
     try renderClippedUserTree(&context, parent_id, child_id);
     try std.testing.expect(!containsElementRow(&context, child_id.id));
+    try std.testing.expectEqual(@as(i32, 2), context.getDebugViewState().row_count);
 
     context.setDebugViewAction(.select_previous);
     try renderClippedUserTree(&context, parent_id, child_id);
@@ -332,6 +340,7 @@ test "renderer-neutral inspector actions navigate collapse retry and close" {
     context.setDebugViewAction(.close);
     try renderClippedUserTree(&context, parent_id, child_id);
     try std.testing.expect(!context.isDebugModeEnabled());
+    try std.testing.expectEqual(zlay.DebugViewState{}, context.getDebugViewState());
 }
 
 test "inspector action navigation reveals offscreen selections" {

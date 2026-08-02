@@ -51,6 +51,13 @@ pub const Action = enum(u8) {
     close,
 };
 
+pub const State = struct {
+    enabled: bool = false,
+    selected_element_id: u32 = 0,
+    selected_row_index: i32 = -1,
+    row_count: i32 = 0,
+};
+
 pub const Selection = struct {
     element_id: u32,
     row_index: i32,

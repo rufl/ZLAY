@@ -9,7 +9,8 @@
 - The compiled mock provider demonstrates that seam, and the built-in inspector
   has an opt-in higher-contrast, larger-type, roomier-row theme while retaining
   pinned defaults. Renderer-neutral actions allow keyboard/gamepad/switch input
-  without adding a platform input dependency.
+  without adding a platform input dependency, and a compact committed-state
+  query supports assistive or remote adapters without exposing row storage.
 - Push/PR CI runs the bounded C-free check; a separate read-only manual/weekly
   workflow runs the complete aggregate matrix.
 - Maintained local gate: `zig build verify-all` with Zig 0.16.0.

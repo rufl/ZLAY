@@ -105,6 +105,7 @@ Configuration methods:
 | `setDebugViewHighlightColor(Color)` / `getDebugViewHighlightColor()` | Override/read the translucent element-highlight color. |
 | `setDebugViewTheme(DebugViewTheme)` / `getDebugViewTheme()` | Override/read inspector text colors, font size, row height, and tree/close target sizes. Defaults preserve pinned output. Font size clamps to 8–48 pixels, controls to 1–30 pixels, and rows to their largest content size through 64 pixels. |
 | `setDebugViewAction(DebugViewAction)` | Queue one renderer-neutral `.select_previous`, `.select_next`, `.toggle_collapse`, or `.close` intent before `beginLayout`. Later calls replace the queued action; rejected frames retain it for retry. |
+| `getDebugViewState()` | Read the committed inspector enabled flag, selected element ID, selected row index, and row count. Disabled inspectors return the zero/default state. |
 | `setCullingEnabled(bool)` | Enable or disable viewport command culling. Enabled by default. |
 | `setExternalScrollHandlingEnabled(bool)` | Switch clipped children to application-supplied offsets instead of internal offsets. |
 | `getMaxElementCount()` / `setMaxElementCount(count)` | Query/change the element declaration limit. The setter clamps values above `maxInt(i32)`. Pointer-array capacity is persistent like Clay's initialization-time allocation: raising the limit can grow it, while lowering the limit never reports a capacity below an already published hit count. |
@@ -160,6 +161,10 @@ Queue at most one action before `beginLayout`; a later call intentionally wins.
 Selection skips text-preview and root-separator rows, clamps at list ends, and
 keeps the selected row visible when ZLAY owns scrolling. With external scroll
 handling enabled, the application remains responsible for revealing it.
+`getDebugViewState()` gives assistive, remote-control, and external-scroll
+adapters the committed selection and list position without exposing inspector
+storage or requiring a pointer device. It does not define platform accessibility
+semantics; those remain renderer/application-owned.
 
 The default theme remains bit-compatible with the pinned inspector. A custom
 theme changes only inspector presentation; application layout and commands

@@ -209,6 +209,9 @@ context.setDebugViewAction(.select_next);
 Previous/next navigation skips non-selectable rows and reveals the selection
 when internal scrolling is active. Toggle and close actions use the same
 failure-atomic frame commit as pointer interaction.
+`getDebugViewState()` exposes the committed enabled/selection/row summary for
+assistive announcements, remote tooling, or application-owned external scroll
+reveal without leaking inspector arrays.
 
 Application hover, transition, external-scroll, text-measurement, and diagnostic
 callbacks may inspect context state, but frame/declaration/input mutation is

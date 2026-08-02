@@ -71,7 +71,8 @@ text contrast, font size, row density, and tree/close target sizes. Theme
 normalization keeps rows tall enough for their text and controls. A single
 queued `debug.Action` lets applications map non-pointer input without adding a
 platform dependency; selection, collapse, close, and internal reveal scrolling
-commit or roll back with the frame.
+commit or roll back with the frame. `debug.State` publishes only the committed
+enabled/selection/row summary, keeping frame-local row storage private.
 
 All storage uses the allocator passed to `Context.init`. There is no implicit
 global context, hidden fallback allocator, or C allocation path. One context is

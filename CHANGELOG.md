@@ -67,6 +67,8 @@ All notable changes to ZLAY are recorded here. The format follows
 - Renderer-neutral inspector previous/next/toggle/close actions for application-
   mapped keyboard, gamepad, switch, or remote input, including internal
   selection reveal and rejected-frame retry.
+- A read-only inspector state summary for assistive, remote-control, and
+  external-scroll adapters.
 - A read-only manual and weekly GitHub Actions workflow for the complete
   `verify-all` matrix, separate from the faster push/pull-request check.
 - Retained element queries, prior-frame pointer hit testing, hover callbacks,

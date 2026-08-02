@@ -604,6 +604,23 @@ pub const Context = struct {
         self.debug_view_action = action;
     }
 
+    pub fn getDebugViewState(self: *const Context) debug_inspector.State {
+        if (!self.debug_mode_enabled) return .{};
+        var state = debug_inspector.State{
+            .enabled = true,
+            .selected_element_id = self.debug_selected_element_id,
+            .row_count = std.math.cast(i32, self.debug_rows.items.len) orelse
+                std.math.maxInt(i32),
+        };
+        for (self.debug_rows.items) |row| {
+            if (row.kind != .element) continue;
+            if (row.element_id != self.debug_selected_element_id) continue;
+            state.selected_row_index = row.row_index;
+            break;
+        }
+        return state;
+    }
+
     pub fn setCullingEnabled(self: *Context, enabled: bool) void {
         if (self.application_callback_phase != .none) return;
         self.culling_enabled = enabled;

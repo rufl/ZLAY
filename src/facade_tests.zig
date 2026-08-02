@@ -225,6 +225,7 @@ pub const native_type_additions = [_][]const u8{
     "ContextError",
     "DebugViewTheme",
     "DebugViewAction",
+    "DebugViewState",
 };
 
 /// Renderer/profile are deliberately separate native additions.
@@ -444,6 +445,7 @@ fn verifyNativeAdditions(comptime zlay: type) void {
     requireAlias(zlay.ContextError, zlay.engine.Error, "ContextError");
     requireAlias(zlay.DebugViewTheme, zlay.debug.Theme, "DebugViewTheme");
     requireAlias(zlay.DebugViewAction, zlay.debug.Action, "DebugViewAction");
+    requireAlias(zlay.DebugViewState, zlay.debug.State, "DebugViewState");
     requireExactSignature(
         zlay.Context.setDebugViewTheme,
         &.{ *zlay.Context, zlay.DebugViewTheme },
@@ -461,6 +463,12 @@ fn verifyNativeAdditions(comptime zlay: type) void {
         &.{ *zlay.Context, zlay.DebugViewAction },
         void,
         "debug view action setter",
+    );
+    requireExactSignature(
+        zlay.Context.getDebugViewState,
+        &.{*const zlay.Context},
+        zlay.DebugViewState,
+        "debug view state getter",
     );
     requireAlias(
         @TypeOf(zlay.debug_view_accessibility_theme),
