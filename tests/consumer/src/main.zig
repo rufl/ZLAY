@@ -54,7 +54,7 @@ const Backend = struct {
     }
 };
 
-pub fn main() !void {
+pub fn main(_: std.process.Init) !void {
     var context = zlay.Context.init(
         std.heap.page_allocator,
         .{ .width = 320, .height = 200 },

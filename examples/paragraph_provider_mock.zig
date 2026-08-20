@@ -102,7 +102,7 @@ const MockProvider = struct {
     };
 };
 
-pub fn main() !void {
+pub fn main(_: std.process.Init) !void {
     var mock = MockProvider{};
     const provider = mock.provider();
     var context = zlay.Context.init(

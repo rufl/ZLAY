@@ -15,7 +15,7 @@ fn panelContents(context: *zlay.Context) !void {
     });
 }
 
-pub fn main() !void {
+pub fn main(_: std.process.Init) !void {
     var context = zlay.Context.init(std.heap.page_allocator, .{ .width = 800, .height = 600 }, .{});
     defer context.deinit();
     context.setMeasureTextFunction(measureMonospace, null);

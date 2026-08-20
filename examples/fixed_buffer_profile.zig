@@ -27,7 +27,7 @@ fn drawRepresentativeFrame(context: *zlay.Context) !void {
     _ = try context.endLayout(0);
 }
 
-pub fn main() !void {
+pub fn main(_: std.process.Init) !void {
     var profiler = zlay.profile.FixedBufferProfiler.init(&storage);
     var context = zlay.Context.init(profiler.allocator(), .{ .width = 640, .height = 360 }, .{
         .max_element_count = 64,
