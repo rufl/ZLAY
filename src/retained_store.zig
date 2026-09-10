@@ -136,6 +136,10 @@ pub const RetainedStore = struct {
         return self.childBucket(index)[0..record.child_count];
     }
 
+    pub fn childCount(self: *const RetainedStore, id: NodeId) Error!usize {
+        return (try self.get(id)).child_count;
+    }
+
     pub fn childAt(self: *const RetainedStore, id: NodeId, child_index: usize) Error!NodeId {
         const child_list = try self.children(id);
         if (child_index >= child_list.len) return error.ChildNotFound;
