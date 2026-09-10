@@ -722,13 +722,12 @@ pub const LayoutTree = struct {
                 continue;
             }
 
-            const line_end = try self.flexLineEnd(children, line_start, available_main, style_value.flex_gap, direction);
+            const line_end = try self.flexLineEnd(children, line_start, available_main, style_value.flex_gap);
             try self.resolveFlexLine(children, line_start, line_end, available_main, style_value.flex_gap, direction);
             const line_cross = try self.flexLineCrossSize(
                 children,
                 line_start,
                 line_end,
-                content_size,
                 cross_parent,
                 direction,
             );
@@ -776,7 +775,7 @@ pub const LayoutTree = struct {
                     cross_cursor,
                     line_cross,
                     cursor,
-                    justify_gap,
+
                     measure,
                     measure_user_data,
                     style_value.align_items,
@@ -799,7 +798,6 @@ pub const LayoutTree = struct {
         start: usize,
         available_main: f32,
         gap: f32,
-        direction: FlexDirection,
     ) Error!usize {
         var end = start;
         var occupied: f32 = 0;
@@ -812,7 +810,6 @@ pub const LayoutTree = struct {
             if (count != 0 and boundedAdd(occupied, needed) > available_main) break;
             occupied = boundedAdd(occupied, needed);
             count += 1;
-            _ = direction;
         }
         return end;
     }
@@ -914,7 +911,6 @@ pub const LayoutTree = struct {
         children: []const NodeId,
         start: usize,
         end: usize,
-        content_size: Dimensions,
         cross_parent: f32,
         direction: FlexDirection,
     ) Error!f32 {
@@ -939,7 +935,7 @@ pub const LayoutTree = struct {
             );
             result = @max(result, boundedAdd(cross_size, marginAcrossAxis(item_style.margin, direction)));
         }
-        _ = content_size;
+
         return result;
     }
 
@@ -954,7 +950,6 @@ pub const LayoutTree = struct {
         cross_cursor: f32,
         line_cross: f32,
         cursor: f32,
-        justify_gap: f32,
         measure: ?IntrinsicMeasureFunction,
         measure_user_data: ?*anyopaque,
         container_align: AlignItems,
@@ -1017,7 +1012,6 @@ pub const LayoutTree = struct {
             measure,
             measure_user_data,
         );
-        _ = justify_gap;
     }
 
     fn computeOverlay(
