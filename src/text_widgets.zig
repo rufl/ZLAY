@@ -366,6 +366,19 @@ pub const VirtualListState = struct {
         self.scroll_offset = @floatCast(clamped);
     }
 
+    pub fn pageNext(self: *VirtualListState) Error!f32 {
+        const maximum = try self.maxScrollOffset();
+        const next = @min(self.scroll_offset + self.viewport_extent, maximum);
+        try self.setScrollOffset(next);
+        return self.scroll_offset;
+    }
+
+    pub fn pagePrevious(self: *VirtualListState) Error!f32 {
+        const previous = @max(self.scroll_offset - self.viewport_extent, 0);
+        try self.setScrollOffset(previous);
+        return self.scroll_offset;
+    }
+
     pub fn setOverscan(self: *VirtualListState, overscan: usize) void {
         self.overscan = overscan;
     }
@@ -478,6 +491,16 @@ test "virtual list scrollToIndex reveals and clamps target items" {
     try list.scrollToIndex(9);
     try std.testing.expectEqual(@as(f32, 140), list.scroll_offset);
     try std.testing.expectError(error.InvalidIndex, list.scrollToIndex(10));
+}
+
+test "virtual list page navigation clamps at both ends" {
+    var list = try VirtualListState.init(10, 20, 60, 0, 0);
+    try std.testing.expectEqual(@as(f32, 60), try list.pageNext());
+    try std.testing.expectEqual(@as(f32, 120), try list.pageNext());
+    try std.testing.expectEqual(@as(f32, 140), try list.pageNext());
+    try std.testing.expectEqual(@as(f32, 80), try list.pagePrevious());
+    try std.testing.expectEqual(@as(f32, 20), try list.pagePrevious());
+    try std.testing.expectEqual(@as(f32, 0), try list.pagePrevious());
 }
 
 test "virtual list rejects non-finite and non-positive geometry" {
