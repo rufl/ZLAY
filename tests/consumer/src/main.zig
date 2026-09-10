@@ -59,6 +59,106 @@ const Backend = struct {
 fn measureText(value: zlay.StringSlice, _: *zlay.TextElementConfig, _: ?*anyopaque) zlay.Dimensions {
     return .{ .width = @floatFromInt(value.asSlice().len), .height = 1 };
 }
+const ParagraphMock = struct {
+    next_handle: u64 = 1,
+    active_key: ?zlay.ParagraphLeaseKey = null,
+    references: u32 = 0,
+
+    fn provider(self: *ParagraphMock) zlay.ParagraphProvider {
+        return .{ .context = self, .vtable = &vtable };
+    }
+
+    fn from(raw: *anyopaque) *ParagraphMock {
+        return @ptrCast(@alignCast(raw));
+    }
+
+    fn measure(
+        _: *anyopaque,
+        _: std.mem.Allocator,
+        request: zlay.ParagraphIntrinsicRequest,
+    ) zlay.paragraph_provider.IntrinsicOutcome {
+        const glyph_width = request.text_style.size_px * 0.55;
+        const width = @as(f32, @floatFromInt(request.text.len)) * glyph_width;
+        const height = request.text_style.size_px * 1.25;
+        const baseline = request.text_style.size_px;
+        return .{ .value = .{
+            .min_content_width = @min(width, glyph_width * 8),
+            .max_content_width = width,
+            .height = height,
+            .first_baseline = baseline,
+            .last_baseline = baseline,
+        } };
+    }
+
+    fn layout(
+        raw: *anyopaque,
+        _: std.mem.Allocator,
+        request: zlay.ParagraphLayoutRequest,
+    ) zlay.paragraph_provider.LayoutOutcome {
+        const self = from(raw);
+        if (self.active_key != null) {
+            return .{ .failure = .{ .kind = .limit_exceeded, .provider_code = 1 } };
+        }
+
+        const natural_width = @as(f32, @floatFromInt(request.text.len)) *
+            request.text_style.size_px * 0.55;
+        const width = @min(natural_width, request.available_width_px);
+        const line_count: u32 = if (natural_width > request.available_width_px) 2 else 1;
+        const height = request.text_style.size_px * 1.25 *
+            @as(f32, @floatFromInt(line_count));
+        const key = zlay.ParagraphLeaseKey{
+            .handle = @enumFromInt(self.next_handle),
+            .generation = 1,
+        };
+        self.next_handle += 1;
+        self.active_key = key;
+        self.references = 1;
+        return .{ .value = .{
+            .handle = key.handle,
+            .generation = key.generation,
+            .paragraph_metrics = .{
+                .logical = .{
+                    .advance = .{ .x = width, .y = height },
+                    .ascent = request.text_style.size_px,
+                    .descent = request.text_style.size_px * 0.25,
+                },
+                .ink = .{ .min = .{}, .max = .{ .x = width, .y = height } },
+                .line_count = line_count,
+            },
+        } };
+    }
+
+    fn retain(raw: *anyopaque, key: zlay.ParagraphLeaseKey) zlay.paragraph_provider.LeaseOutcome {
+        const self = from(raw);
+        if (!sameKey(self.active_key, key) or self.references == 0) {
+            return .{ .failure = .{ .kind = .stale_handle } };
+        }
+        self.references += 1;
+        return .{ .value = {} };
+    }
+
+    fn release(raw: *anyopaque, key: zlay.ParagraphLeaseKey) zlay.paragraph_provider.LeaseOutcome {
+        const self = from(raw);
+        if (!sameKey(self.active_key, key) or self.references == 0) {
+            return .{ .failure = .{ .kind = .stale_handle } };
+        }
+        self.references -= 1;
+        if (self.references == 0) self.active_key = null;
+        return .{ .value = {} };
+    }
+
+    fn sameKey(active: ?zlay.ParagraphLeaseKey, key: zlay.ParagraphLeaseKey) bool {
+        const value = active orelse return false;
+        return value.handle == key.handle and value.generation == key.generation;
+    }
+
+    const vtable = zlay.ParagraphProviderVTable{
+        .measure_intrinsic = measure,
+        .layout_paragraph = layout,
+        .retain_paragraph = retain,
+        .release_paragraph = release,
+    };
+};
 
 fn exercisePublicApis(text_storage: []u8) !zlay.text_widgets.TextInput {
     var button = zlay.widgets.Button.init(.{ .id = 100 });
@@ -116,13 +216,82 @@ pub fn main(_: std.process.Init) !void {
         .background_color = .{ .r = 20, .g = 40, .b = 60, .a = 255 },
     });
     try context.textSlice(input.bytes(), .{ .font_size = 12 });
-
     try context.closeElement();
 
-    const commands = try context.endLayout(1.0 / 60.0);
-    var backend = Backend{};
-    const stats = try zlay.renderer.consumeArray(Backend, &backend, commands);
-    if (stats.rectangles != 1 or stats.text != 1 or stats.commandCount() != 2 or backend.calls != 2) {
+    const legacy_commands = try context.endLayout(1.0 / 60.0);
+    var legacy_backend = Backend{};
+    const legacy_stats = try zlay.renderer.consumeArray(Backend, &legacy_backend, legacy_commands);
+    if (legacy_stats.rectangles != 1 or legacy_stats.text != 1 or
+        legacy_stats.commandCount() != 2 or legacy_backend.calls != 2)
+    {
         return error.UnexpectedRenderCommandCount;
+    }
+
+    var paragraph_mock = ParagraphMock{};
+    const paragraph_provider = paragraph_mock.provider();
+    context.setParagraphProvider(paragraph_provider);
+
+    try context.beginLayout();
+    try context.openElementWithId(context.id("paragraph-smoke"), .{
+        .layout = .{
+            .sizing = .{ .width = zlay.grow(), .height = zlay.grow() },
+        },
+        .background_color = .{ .r = 20, .g = 40, .b = 60, .a = 255 },
+    });
+    try context.textSliceWithParagraphStyle(
+        "provider",
+        .{},
+        .{
+            .font_stack_id = 7,
+            .size_px = 12,
+            .language = "en",
+            .line_height = .{ .multiplier = 1.25 },
+            .wrap = .word,
+            .alignment = .start,
+        },
+    );
+    try context.closeElement();
+
+    const paragraph_commands_array = try context.endLayout(1.0 / 60.0);
+    var paragraph_key: ?zlay.ParagraphLeaseKey = null;
+    var paragraph_commands: usize = 0;
+    for (paragraph_commands_array.items()) |*command| {
+        const paragraph = context.paragraphRenderData(command) orelse continue;
+        paragraph_commands += 1;
+        if (paragraph.available_width_px <= 0 or paragraph.lease.paragraph_metrics.line_count == 0) {
+            return error.UnexpectedParagraphMetrics;
+        }
+        const key = paragraph.lease.key();
+        switch (try paragraph_provider.retainParagraph(key)) {
+            .value => paragraph_key = key,
+            .failure => return error.ParagraphRetainFailed,
+        }
+    }
+    const retained_key = paragraph_key orelse return error.ParagraphCommandMissing;
+    if (paragraph_commands != 1 or paragraph_mock.references != 2) {
+        return error.UnexpectedParagraphLeaseState;
+    }
+
+    var paragraph_backend = Backend{};
+    const paragraph_stats = try zlay.renderer.consumeArray(
+        Backend,
+        &paragraph_backend,
+        paragraph_commands_array,
+    );
+    if (paragraph_stats.rectangles != 1 or paragraph_stats.custom != 1 or
+        paragraph_stats.commandCount() != 2 or paragraph_backend.calls != 2)
+    {
+        return error.UnexpectedRenderCommandCount;
+    }
+
+    try context.beginLayout();
+    if (paragraph_mock.references != 1) return error.UnexpectedParagraphRelease;
+    _ = try context.endLayout(0);
+    switch (try paragraph_provider.releaseParagraph(retained_key)) {
+        .value => {},
+        .failure => return error.ParagraphReleaseFailed,
+    }
+    if (paragraph_mock.references != 0 or paragraph_mock.active_key != null) {
+        return error.UnexpectedParagraphLeaseState;
     }
 }
