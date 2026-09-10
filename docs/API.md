@@ -573,8 +573,8 @@ auto margins; LTR/RTL flex, overlay, and grid placement; min/max dimensions;
 aspect ratios; `display: none`; flow-neutral relative inset offsets; physical
 absolute insets with opposing-inset auto sizing and positioned auto margins;
 fixed padding and margins with optional fixed/percentage `ResponsiveEdges`
-overrides; and auto/length/percentage/stretch/min-content/max-content/
-fit-content dimensions.
+overrides; allocation-free clipped retained-node hit testing; and
+auto/length/percentage/stretch/min-content/max-content/fit-content dimensions.
 Shared and axis-specific typed gaps support fixed values, including negative
 overlap, plus non-negative percentage and stretch units with optional bounds.
 `Overflow.clip` exposes inherited renderer-neutral clip rectangles.

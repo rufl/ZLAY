@@ -20,6 +20,8 @@ All notable changes to ZLAY are recorded here. The format follows
   gaps.
 - Added retained-layout regression coverage for relative offsets in grid and
   overlay containers.
+- Added allocation-free retained-node hit testing that respects computed
+  ancestry clips and returns the deepest matching node.
 
 ### Changed
 

@@ -593,6 +593,33 @@ pub const LayoutTree = struct {
         return (try self.nodeConstAt(id)).layout;
     }
 
+    /// Returns the deepest visible descendant of `root_id` containing `point`.
+    /// Node traversal is allocation-free; ancestor clips are already folded into
+    /// each computed layout's `clip` rectangle.
+    pub fn hitTest(self: *const LayoutTree, root_id: NodeId, point: Point) Error!?NodeId {
+        _ = try self.nodeConstAt(root_id);
+        var result: ?NodeId = null;
+        var result_depth: usize = 0;
+        var slot_index: usize = 0;
+        while (slot_index < self.slots.items.len) : (slot_index += 1) {
+            const slot_entry = self.slots.items[slot_index];
+            const node = slot_entry.node orelse continue;
+            const candidate = NodeId{ .index = @intCast(slot_index), .generation = slot_entry.generation };
+            if (node.style.display == .none or
+                !containsLayoutPoint(node.layout, point) or
+                !isDescendantOf(self, candidate, root_id))
+            {
+                continue;
+            }
+            const depth = depthFrom(self, candidate, root_id) catch continue;
+            if (result == null or depth >= result_depth) {
+                result = candidate;
+                result_depth = depth;
+            }
+        }
+        return result;
+    }
+
     /// Returns the renderer-neutral clip region effective for this node.
     pub fn readClip(self: *const LayoutTree, id: NodeId) Error!?ClipRect {
         return (try self.nodeConstAt(id)).layout.clip;
@@ -2816,6 +2843,39 @@ fn resolvedSpacingStyle(style: Style, containing: Dimensions) Style {
     result.margin = resolvedEdges(style.margin, style.margin_spec, containing);
     return result;
 }
+
+fn containsLayoutPoint(layout: Layout, point: Point) bool {
+    if (point.x < layout.x or point.y < layout.y) return false;
+    return point.x < boundedAdd(layout.x, layout.width) and
+        point.y < boundedAdd(layout.y, layout.height) and
+        if (layout.clip) |clip|
+            point.x >= clip.x and point.y >= clip.y and
+                point.x < boundedAdd(clip.x, clip.width) and
+                point.y < boundedAdd(clip.y, clip.height)
+        else
+            true;
+}
+
+fn isDescendantOf(self: *const LayoutTree, candidate: NodeId, root: NodeId) bool {
+    var current = candidate;
+    var steps: usize = 0;
+    while (steps <= max_supported_tree_depth) : (steps += 1) {
+        if (sameId(current, root)) return true;
+        const node = self.nodeConstAt(current) catch return false;
+        current = node.parent orelse return false;
+    }
+    return false;
+}
+
+fn depthFrom(self: *const LayoutTree, candidate: NodeId, root: NodeId) Error!usize {
+    var current = candidate;
+    var depth: usize = 0;
+    while (depth <= max_supported_tree_depth) : (depth += 1) {
+        if (sameId(current, root)) return depth;
+        current = (try self.nodeConstAt(current)).parent orelse return error.ChildNotFound;
+    }
+    return error.TreeDepthExceeded;
+}
 fn verticalEdges(edges: Edges) f32 {
     return boundedAdd(edges.top, edges.bottom);
 }
@@ -3967,6 +4027,27 @@ test "relative offsets apply to grid and overlay children" {
     try tree.appendChild(overlay, overlay_child);
     try tree.compute(overlay, .{ .width = 40, .height = 40 });
     try std.testing.expectEqual(Layout{ .x = 15, .y = 20, .width = 10, .height = 10 }, try tree.readLayout(overlay_child));
+}
+
+test "retained hit testing honors ancestry clips and deepest child" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 5 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+        .overflow = .clip,
+    });
+    const child = try tree.create(.{
+        .width = .{ .length = 80 },
+        .height = .{ .length = 80 },
+        .left = .{ .length = 30 },
+        .top = .{ .length = 30 },
+    });
+    try tree.appendChild(root, child);
+    try tree.compute(root, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(child, (try tree.hitTest(root, .{ .x = 90, .y = 90 })).?);
+    try std.testing.expectEqual(root, (try tree.hitTest(root, .{ .x = 10, .y = 10 })).?);
+    try std.testing.expect((try tree.hitTest(root, .{ .x = 105, .y = 50 })) == null);
 }
 
 test "none and absolute children have deterministic boxes" {
