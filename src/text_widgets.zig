@@ -15,6 +15,7 @@ pub const Error = error{
     InvalidItemExtent,
     InvalidViewportExtent,
     InvalidScrollOffset,
+    InvalidIndex,
     InvalidRange,
 };
 
@@ -328,6 +329,20 @@ pub const VirtualListState = struct {
         self.scroll_offset = scroll_offset;
     }
 
+    /// Scrolls far enough to reveal an item, clamped to the content extent.
+    pub fn scrollToIndex(self: *VirtualListState, index: usize) Error!void {
+        if (index >= self.item_count) return error.InvalidIndex;
+        const item_top = @as(f64, @floatFromInt(index)) * @as(f64, self.item_extent);
+        const max_offset = @max(
+            @as(f64, @floatFromInt(self.item_count)) * @as(f64, self.item_extent) -
+                @as(f64, self.viewport_extent),
+            0,
+        );
+        const target = @min(item_top, max_offset);
+        if (!std.math.isFinite(target) or target > std.math.floatMax(f32)) return error.InvalidRange;
+        self.scroll_offset = @floatCast(target);
+    }
+
     pub fn setOverscan(self: *VirtualListState, overscan: usize) void {
         self.overscan = overscan;
     }
@@ -427,6 +442,15 @@ test "virtual list range clamps boundaries and applies overscan" {
     const tail = try (try VirtualListState.init(5, 10, 20, 100, 3)).visibleRange();
     try std.testing.expectEqual(@as(usize, 2), tail.start);
     try std.testing.expectEqual(@as(usize, 5), tail.end);
+}
+
+test "virtual list scrollToIndex reveals and clamps target items" {
+    var list = try VirtualListState.init(10, 20, 60, 0, 0);
+    try list.scrollToIndex(3);
+    try std.testing.expectEqual(@as(f32, 60), list.scroll_offset);
+    try list.scrollToIndex(9);
+    try std.testing.expectEqual(@as(f32, 140), list.scroll_offset);
+    try std.testing.expectError(error.InvalidIndex, list.scrollToIndex(10));
 }
 
 test "virtual list rejects non-finite and non-positive geometry" {

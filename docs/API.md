@@ -648,9 +648,10 @@ application-owned.
 `zlay.text_widgets` provides caller-storage-backed byte-oriented text editing
 and pure virtual-list range calculations. `TextInput` supports cursor movement,
 selection, insertion, deletion, and bounded capacity. Virtual-list helpers
-return deterministic half-open visible ranges with optional overscan. UTF-8
-grapheme behavior, font measurement, row rendering, and data ownership remain
-application-owned.
+return deterministic half-open visible ranges with optional overscan;
+`VirtualListState.scrollToIndex` reveals a valid item while clamping to the
+maximum scroll extent. UTF-8 grapheme behavior, font measurement, row rendering,
+and data ownership remain application-owned.
 
 ## Accessibility and reduced motion
 
