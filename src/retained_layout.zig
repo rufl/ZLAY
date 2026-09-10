@@ -576,12 +576,16 @@ pub const LayoutTree = struct {
             const child_measurement = child_node.intrinsic_measurement;
             const main_margin = marginAlongAxis(child_style.margin, style_value.flex_direction);
             const cross_margin = marginAcrossAxis(child_style.margin, style_value.flex_direction);
+            const child_align = resolveAlign(child_style.align_self, style_value.align_items);
+            const cross_available = if (style_value.flex_direction == .row) content_size.height else content_size.width;
             var child_width = resolveDimension(child_style.width, content_size.width, 0);
             var child_height = resolveDimension(child_style.height, content_size.height, 0);
             if (style_value.flex_direction == .row) {
                 child_width = boundedSubtract(child_node.flex_size, main_margin);
                 if (child_style.height == .auto) {
-                    child_height = if (child_measurement) |measured|
+                    child_height = if (child_align == .stretch)
+                        boundedSubtract(cross_available, cross_margin)
+                    else if (child_measurement) |measured|
                         measured.height
                     else
                         boundedSubtract(content_size.height, cross_margin);
@@ -589,7 +593,9 @@ pub const LayoutTree = struct {
             } else {
                 child_height = boundedSubtract(child_node.flex_size, main_margin);
                 if (child_style.width == .auto) {
-                    child_width = if (child_measurement) |measured|
+                    child_width = if (child_align == .stretch)
+                        boundedSubtract(cross_available, cross_margin)
+                    else if (child_measurement) |measured|
                         measured.width
                     else
                         boundedSubtract(content_size.width, cross_margin);
@@ -597,9 +603,6 @@ pub const LayoutTree = struct {
             }
             child_width = clampDimension(child_width, child_style.min_width, child_style.max_width, content_size.width);
             child_height = clampDimension(child_height, child_style.min_height, child_style.max_height, content_size.height);
-
-            const child_align = resolveAlign(child_style.align_self, style_value.align_items);
-            const cross_available = if (style_value.flex_direction == .row) content_size.height else content_size.width;
             const cross_size = if (style_value.flex_direction == .row) child_height else child_width;
             const cross_offset = crossAxisOffset(
                 child_align,
@@ -952,7 +955,7 @@ fn justifyLeading(justify: JustifyContent, free: f32, count: usize) f32 {
 }
 
 fn justifyGap(justify: JustifyContent, free: f32, count: usize) f32 {
-    if (count < 2 and justify == .space_between) return 0;
+    if (count == 0 or (count < 2 and justify == .space_between)) return 0;
     const count_float = @as(f32, @floatFromInt(count));
     return switch (justify) {
         .space_between => free / @as(f32, @floatFromInt(count - 1)),
