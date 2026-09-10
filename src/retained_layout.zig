@@ -1530,9 +1530,9 @@ fn flexMainFactor(style: Style, direction: FlexDirection, free: f32, base: f32) 
 }
 
 fn weightedShare(available: f32, factor: f32, total: f32) f32 {
-    if (available == 0 or factor <= 0 or total <= 0) return 0;
+    if (!finite(available) or !finite(factor) or !finite(total) or available == 0 or factor <= 0 or total <= 0) return 0;
     const result = (available / total) * factor;
-    return if (finite(result)) result else std.math.floatMax(f32);
+    return if (finite(result)) result else 0;
 }
 
 fn effectiveGap(specific: f32, shared: f32) f32 {
