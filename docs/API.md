@@ -594,6 +594,8 @@ Track and tree limits are explicit: `max_supported_grid_tracks` bounds
 allocation-free grid scratch to 256 tracks per axis, while
 `max_supported_tree_depth` bounds layout descent to 256 levels.
 Hidden-tree and destruction traversal are iterative.
+`setScrollOffset` updates a node's non-negative content translation without
+replacing its other style fields and marks the node and its ancestors dirty.
 
 `computeWithMeasure` supplies allocation-free intrinsic leaf measurement.
 `computeWithMeasureTiers` adds minimum, preferred, and maximum intrinsic

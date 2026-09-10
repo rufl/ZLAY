@@ -459,6 +459,16 @@ pub const LayoutTree = struct {
         self.markDirty(id);
     }
 
+    /// Updates only the scroll translation and invalidates dependent layout.
+    pub fn setScrollOffset(self: *LayoutTree, id: NodeId, offset: Point) Error!void {
+        if (!finite(offset.x) or offset.x < 0 or !finite(offset.y) or offset.y < 0) {
+            return error.InvalidStyle;
+        }
+        const node_ref = try self.nodeAt(id);
+        node_ref.style.scroll_offset = offset;
+        self.markDirty(id);
+    }
+
     pub fn parent(self: *const LayoutTree, id: NodeId) Error!?NodeId {
         return (try self.nodeConstAt(id)).parent;
     }
@@ -4204,6 +4214,23 @@ test "retained scroll offset translates flow content within clip" {
     try std.testing.expectEqual(@as(f32, -20), (try tree.readLayout(child)).y);
     try std.testing.expectEqual(child, (try tree.hitTest(root, .{ .x = 5, .y = 5 })).?);
     try std.testing.expect((try tree.hitTest(root, .{ .x = 5, .y = 65 })) == null);
+}
+
+test "retained scroll setter invalidates and recomputes descendants" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 3 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 50 },
+    });
+    const child = try tree.create(.{ .width = .{ .length = 20 }, .height = .{ .length = 20 } });
+    try tree.appendChild(root, child);
+    try tree.compute(root, .{ .width = 100, .height = 50 });
+    try tree.setScrollOffset(root, .{ .y = 12 });
+    try std.testing.expect(try tree.isDirty(root));
+    try tree.computeDirty(root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(@as(f32, -12), (try tree.readLayout(child)).y);
+    try std.testing.expectError(error.InvalidStyle, tree.setScrollOffset(root, .{ .x = -1 }));
 }
 
 test "retained flex order preserves stable ties" {
