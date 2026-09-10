@@ -121,6 +121,7 @@ pub const Dimensions = struct {
     width: f32 = 0,
     height: f32 = 0,
 };
+pub const IntrinsicMeasureFunction = *const fn (NodeId, Dimensions, ?*anyopaque) Dimensions;
 
 pub const Point = struct {
     x: f32 = 0,
@@ -153,6 +154,7 @@ const Node = struct {
     children: std.ArrayList(NodeId) = .empty,
     layout: Layout = .{},
     grid_placement: ?GridPlacement = null,
+    intrinsic_measurement: ?Dimensions = null,
     flex_base: f32 = 0,
     flex_size: f32 = 0,
     flex_frozen: bool = false,
@@ -290,7 +292,22 @@ pub const LayoutTree = struct {
     pub fn compute(self: *LayoutTree, root_id: NodeId, available: Dimensions) Error!void {
         try validateDimensions(available);
         _ = try self.nodeAt(root_id);
-        self.computeNode(root_id, .{}, available, null, true, null) catch |err| return err;
+        self.computeNode(root_id, .{}, available, null, true, null, null, null) catch |err| return err;
+    }
+
+    /// Compute layout using caller-owned intrinsic dimensions for leaf nodes
+    /// whose width or height is `auto`. The callback must not retain tree state
+    /// and its result must contain finite, non-negative dimensions.
+    pub fn computeWithMeasure(
+        self: *LayoutTree,
+        root_id: NodeId,
+        available: Dimensions,
+        measure: IntrinsicMeasureFunction,
+        user_data: ?*anyopaque,
+    ) Error!void {
+        try validateDimensions(available);
+        _ = try self.nodeAt(root_id);
+        self.computeNode(root_id, .{}, available, null, true, null, measure, user_data) catch |err| return err;
     }
 
     pub fn readLayout(self: *const LayoutTree, id: NodeId) Error!Layout {
@@ -347,12 +364,26 @@ pub const LayoutTree = struct {
         forced_size: ?Dimensions,
         is_root: bool,
         inherited_clip: ?ClipRect,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
     ) Error!void {
         const node_ref = try self.nodeAt(id);
         const style_value = node_ref.style;
         if (style_value.display == .none) {
             try self.hideNode(id);
             return;
+        }
+
+        const children = node_ref.children.items;
+        const supplied_measurement = node_ref.intrinsic_measurement;
+        node_ref.intrinsic_measurement = null;
+        var intrinsic_measurement = supplied_measurement;
+        if (intrinsic_measurement == null and measure != null and children.len == 0 and
+            (style_value.width == .auto or style_value.height == .auto))
+        {
+            const measured = measure.?(id, containing, measure_user_data);
+            try validateDimensions(measured);
+            intrinsic_measurement = measured;
         }
 
         var size: Dimensions = forced_size orelse .{
@@ -368,8 +399,13 @@ pub const LayoutTree = struct {
                 style_value.height == .auto,
             );
         }
+        if (intrinsic_measurement) |measured| {
+            if (style_value.width == .auto) size.width = measured.width;
+            if (style_value.height == .auto) size.height = measured.height;
+        }
         size.width = clampDimension(size.width, style_value.min_width, style_value.max_width, containing.width);
         size.height = clampDimension(size.height, style_value.min_height, style_value.max_height, containing.height);
+
         const effective_clip = clipForNode(style_value.overflow, inherited_clip, origin, size);
         node_ref.layout = .{
             .x = origin.x,
@@ -379,11 +415,10 @@ pub const LayoutTree = struct {
             .clip = effective_clip,
         };
         node_ref.dirty = false;
-        const children = node_ref.children.items;
         if (children.len == 0) return;
 
         if (style_value.display == .grid) {
-            try self.computeGrid(id, origin, size, effective_clip);
+            try self.computeGrid(id, origin, size, effective_clip, measure, measure_user_data);
             return;
         }
 
@@ -392,12 +427,21 @@ pub const LayoutTree = struct {
             const child_node = try self.nodeAt(child_id);
             const child_style = child_node.style;
             child_node.flex_frozen = child_style.display == .none or child_style.position == .absolute;
+            child_node.intrinsic_measurement = null;
+            if (!child_node.flex_frozen and measure != null and child_node.children.items.len == 0 and
+                (child_style.width == .auto or child_style.height == .auto))
+            {
+                const measured = measure.?(child_id, size, measure_user_data);
+                try validateDimensions(measured);
+                child_node.intrinsic_measurement = measured;
+            }
             if (child_node.flex_frozen) continue;
             child_node.flex_base = flexBaseDimension(
                 child_style,
                 style_value.flex_direction,
                 available_main,
                 if (style_value.flex_direction == .row) size.height else size.width,
+                child_node.intrinsic_measurement,
             );
             child_node.flex_size = child_node.flex_base;
         }
@@ -474,18 +518,24 @@ pub const LayoutTree = struct {
                 continue;
             }
             if (child_style.position == .absolute) {
-                try self.computeAbsolute(child_id, child_style, size, origin, effective_clip);
+                try self.computeAbsolute(child_id, child_style, size, origin, effective_clip, measure, measure_user_data);
                 continue;
             }
 
+            const child_node = try self.nodeConstAt(child_id);
+            const child_measurement = child_node.intrinsic_measurement;
             var child_width = resolveDimension(child_style.width, size.width, 0);
             var child_height = resolveDimension(child_style.height, size.height, 0);
             if (style_value.flex_direction == .row) {
-                child_width = (try self.nodeConstAt(child_id)).flex_size;
-                if (child_style.height == .auto) child_height = size.height;
+                child_width = child_node.flex_size;
+                if (child_style.height == .auto) {
+                    child_height = if (child_measurement) |measured| measured.height else size.height;
+                }
             } else {
-                child_height = (try self.nodeConstAt(child_id)).flex_size;
-                if (child_style.width == .auto) child_width = size.width;
+                child_height = child_node.flex_size;
+                if (child_style.width == .auto) {
+                    child_width = if (child_measurement) |measured| measured.width else size.width;
+                }
             }
             child_width = clampDimension(child_width, child_style.min_width, child_style.max_width, size.width);
             child_height = clampDimension(child_height, child_style.min_height, child_style.max_height, size.height);
@@ -493,13 +543,30 @@ pub const LayoutTree = struct {
                 Point{ .x = origin.x + cursor, .y = origin.y }
             else
                 Point{ .x = origin.x, .y = origin.y + cursor };
-            try self.computeNode(child_id, child_origin, size, .{ .width = child_width, .height = child_height }, false, effective_clip);
+            try self.computeNode(
+                child_id,
+                child_origin,
+                size,
+                .{ .width = child_width, .height = child_height },
+                false,
+                effective_clip,
+                measure,
+                measure_user_data,
+            );
             const child_layout = try self.readLayout(child_id);
             cursor += if (style_value.flex_direction == .row) child_layout.width else child_layout.height;
         }
     }
 
-    fn computeGrid(self: *LayoutTree, id: NodeId, origin: Point, size: Dimensions, inherited_clip: ?ClipRect) Error!void {
+    fn computeGrid(
+        self: *LayoutTree,
+        id: NodeId,
+        origin: Point,
+        size: Dimensions,
+        inherited_clip: ?ClipRect,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
+    ) Error!void {
         const node_ref = try self.nodeAt(id);
         const style_value = node_ref.style;
         const columns = style_value.grid_columns;
@@ -555,7 +622,7 @@ pub const LayoutTree = struct {
                 continue;
             }
             if (child_style.position == .absolute) {
-                try self.computeAbsolute(child_id, child_style, size, origin, inherited_clip);
+                try self.computeAbsolute(child_id, child_style, size, origin, inherited_clip, measure, measure_user_data);
                 continue;
             }
             var placement = (try self.nodeConstAt(child_id)).grid_placement;
@@ -599,10 +666,16 @@ pub const LayoutTree = struct {
             );
             const child_x = origin.x + gridTrackOffset(columns, resolved_placement.column, size.width, column_gap);
             const child_y = origin.y + gridTrackOffset(rows, resolved_placement.row, size.height, row_gap);
-            try self.computeNode(child_id, .{ .x = child_x, .y = child_y }, size, .{
-                .width = child_width,
-                .height = child_height,
-            }, false, inherited_clip);
+            try self.computeNode(
+                child_id,
+                .{ .x = child_x, .y = child_y },
+                size,
+                .{ .width = child_width, .height = child_height },
+                false,
+                inherited_clip,
+                measure,
+                measure_user_data,
+            );
         }
     }
 
@@ -637,6 +710,8 @@ pub const LayoutTree = struct {
         containing: Dimensions,
         parent_origin: Point,
         inherited_clip: ?ClipRect,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
     ) Error!void {
         var width = resolveDimension(style_value.width, containing.width, 0);
         var height = resolveDimension(style_value.height, containing.height, 0);
@@ -648,7 +723,16 @@ pub const LayoutTree = struct {
         if (style_value.height == .auto and top != null and bottom != null) height = @max(containing.height - top.? - bottom.?, 0);
         const x = parent_origin.x + (if (left) |value| value else if (right) |value| containing.width - value - width else 0);
         const y = parent_origin.y + (if (top) |value| value else if (bottom) |value| containing.height - value - height else 0);
-        try self.computeNode(id, .{ .x = x, .y = y }, containing, .{ .width = width, .height = height }, false, inherited_clip);
+        try self.computeNode(
+            id,
+            .{ .x = x, .y = y },
+            containing,
+            .{ .width = width, .height = height },
+            false,
+            inherited_clip,
+            measure,
+            measure_user_data,
+        );
     }
 
     fn hideNode(self: *LayoutTree, id: NodeId) Error!void {
@@ -713,7 +797,13 @@ fn finite(value: f32) bool {
     return std.math.isFinite(value);
 }
 
-fn flexBaseDimension(style: Style, direction: FlexDirection, main_parent: f32, cross_parent: f32) f32 {
+fn flexBaseDimension(
+    style: Style,
+    direction: FlexDirection,
+    main_parent: f32,
+    cross_parent: f32,
+    intrinsic_measurement: ?Dimensions,
+) f32 {
     const main_dimension = if (direction == .row) style.width else style.height;
     if (style.flex_basis != .auto) return boundedResolved(style.flex_basis, main_parent);
     if (style.aspect_ratio) |ratio| {
@@ -723,6 +813,9 @@ fn flexBaseDimension(style: Style, direction: FlexDirection, main_parent: f32, c
             const resolved = if (direction == .row) cross * ratio else cross / ratio;
             return if (finite(resolved)) @max(resolved, 0) else std.math.floatMax(f32);
         }
+    }
+    if (intrinsic_measurement) |measured| {
+        if (main_dimension == .auto) return if (direction == .row) measured.width else measured.height;
     }
     return boundedResolved(main_dimension, main_parent);
 }
@@ -833,6 +926,21 @@ fn validateStyle(style: Style) Error!void {
     };
 }
 
+const IntrinsicProbe = struct {
+    calls: usize = 0,
+    dimensions: Dimensions = .{ .width = 23, .height = 19 },
+};
+
+fn measureIntrinsic(_: NodeId, _: Dimensions, user_data: ?*anyopaque) Dimensions {
+    const probe: *IntrinsicProbe = @ptrCast(@alignCast(user_data.?));
+    probe.calls += 1;
+    return probe.dimensions;
+}
+
+fn measureInvalidIntrinsic(_: NodeId, _: Dimensions, _: ?*anyopaque) Dimensions {
+    return .{ .width = std.math.nan(f32), .height = 10 };
+}
+
 fn resolveDimension(dimension: Dimension, parent: f32, auto_value: f32) f32 {
     return switch (dimension) {
         .auto => auto_value,
@@ -880,6 +988,29 @@ fn boundedCoordinate(value: f32) f32 {
 
 fn boundedAdd(left: f32, right: f32) f32 {
     return boundedCoordinate(left + right);
+}
+
+test "intrinsic measurement sizes auto leaf dimensions" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 80 } });
+    const child = try tree.create(.{});
+    try tree.appendChild(root, child);
+
+    var probe = IntrinsicProbe{};
+    try tree.computeWithMeasure(root, .{ .width = 100, .height = 80 }, measureIntrinsic, &probe);
+    try std.testing.expectEqual(@as(usize, 1), probe.calls);
+    try std.testing.expectEqual(Layout{ .width = 23, .height = 19 }, try tree.readLayout(child));
+}
+
+test "intrinsic measurement rejects non-finite dimensions" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 2 });
+    defer tree.deinit();
+    const leaf = try tree.create(.{});
+    try std.testing.expectError(
+        error.InvalidDimensions,
+        tree.computeWithMeasure(leaf, .{ .width = 100, .height = 80 }, measureInvalidIntrinsic, null),
+    );
 }
 
 test "retained tree mutates children and propagates dirty state" {
