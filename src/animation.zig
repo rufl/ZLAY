@@ -316,6 +316,7 @@ pub const VisualStateBridge = struct {
     }
 
     pub fn advance(self: *VisualStateBridge, delta_seconds: f32) Error!Sample {
+        if (!std.math.isFinite(delta_seconds) or delta_seconds < 0) return error.InvalidTime;
         if (self.state == .idle) return error.InvalidState;
         if (self.state == .completed or self.state == .cancelled) {
             if (!self.reduced_motion.shouldAnimate()) return self.settledSample();
