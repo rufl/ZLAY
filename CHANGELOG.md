@@ -18,6 +18,8 @@ All notable changes to ZLAY are recorded here. The format follows
 - Added reverse row/column flex axes, flow-neutral relative inset offsets,
   fixed/percentage responsive padding and margins, and bounded negative fixed
   gaps.
+- Added retained-layout regression coverage for relative offsets in grid and
+  overlay containers.
 
 ### Changed
 

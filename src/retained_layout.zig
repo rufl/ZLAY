@@ -3932,6 +3932,42 @@ test "rtl row direction mirrors child placement while absolute insets stay physi
     try std.testing.expectEqual(Layout{ .x = 50, .width = 20, .height = 10 }, try tree.readLayout(second));
     try std.testing.expectEqual(Layout{ .x = 7, .y = 2, .width = 10, .height = 10 }, try tree.readLayout(absolute));
 }
+test "relative offsets apply to grid and overlay children" {
+    const tracks = [_]GridTrack{GridTrack.fixedPx(40)};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const grid = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 40 },
+        .height = .{ .length = 40 },
+        .grid_columns = &tracks,
+        .grid_rows = &tracks,
+    });
+    const grid_child = try tree.create(.{
+        .width = .{ .length = 10 },
+        .height = .{ .length = 10 },
+        .left = .{ .length = 3 },
+        .bottom = .{ .length = 4 },
+    });
+    try tree.appendChild(grid, grid_child);
+    try tree.compute(grid, .{ .width = 40, .height = 40 });
+    try std.testing.expectEqual(Layout{ .x = 3, .y = -4, .width = 10, .height = 10 }, try tree.readLayout(grid_child));
+
+    const overlay = try tree.create(.{
+        .display = .overlay,
+        .width = .{ .length = 40 },
+        .height = .{ .length = 40 },
+    });
+    const overlay_child = try tree.create(.{
+        .width = .{ .length = 10 },
+        .height = .{ .length = 10 },
+        .alignment = .center,
+        .top = .{ .length = 5 },
+    });
+    try tree.appendChild(overlay, overlay_child);
+    try tree.compute(overlay, .{ .width = 40, .height = 40 });
+    try std.testing.expectEqual(Layout{ .x = 15, .y = 20, .width = 10, .height = 10 }, try tree.readLayout(overlay_child));
+}
 
 test "none and absolute children have deterministic boxes" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
