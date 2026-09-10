@@ -30,6 +30,28 @@ pub const NodeId = struct {
 pub const Display = enum { flex, grid, none };
 pub const Position = enum { relative, absolute };
 pub const FlexDirection = enum { row, column };
+pub const Overflow = enum { visible, clip };
+
+/// A renderer-neutral visible region for a laid out node and its descendants.
+/// A null clip means no ancestor or node requested clipping.
+pub const ClipRect = struct {
+    x: f32 = 0,
+    y: f32 = 0,
+    width: f32 = 0,
+    height: f32 = 0,
+};
+
+fn aspectRatioDimension(width: f32, height: f32, ratio: f32, width_auto: bool, height_auto: bool) Dimensions {
+    if (width_auto and !height_auto) {
+        const resolved_width = height * ratio;
+        return .{ .width = if (finite(resolved_width)) resolved_width else std.math.floatMax(f32), .height = height };
+    }
+    if (height_auto and !width_auto) {
+        const resolved_height = width / ratio;
+        return .{ .width = width, .height = if (finite(resolved_height)) resolved_height else std.math.floatMax(f32) };
+    }
+    return .{ .width = width, .height = height };
+}
 
 /// One explicit grid track. `fixed` is pixels; `fr` receives a share of the
 /// space left after fixed tracks and gaps.
@@ -80,6 +102,8 @@ pub const Style = struct {
     /// Zero preserves the original no-shrink behavior; set nonzero for flex shrinking.
     flex_shrink: f32 = 0,
     flex_basis: Dimension = .auto,
+    aspect_ratio: ?f32 = null,
+    overflow: Overflow = .visible,
     grid_columns: []const GridTrack = &.{},
     grid_rows: []const GridTrack = &.{},
     grid_column_gap: f32 = 0,
@@ -105,6 +129,7 @@ pub const Layout = struct {
     y: f32 = 0,
     width: f32 = 0,
     height: f32 = 0,
+    clip: ?ClipRect = null,
 };
 
 pub const Options = struct {
@@ -260,11 +285,16 @@ pub const LayoutTree = struct {
     pub fn compute(self: *LayoutTree, root_id: NodeId, available: Dimensions) Error!void {
         try validateDimensions(available);
         _ = try self.nodeAt(root_id);
-        self.computeNode(root_id, .{}, available, null, true) catch |err| return err;
+        self.computeNode(root_id, .{}, available, null, true, null) catch |err| return err;
     }
 
     pub fn readLayout(self: *const LayoutTree, id: NodeId) Error!Layout {
         return (try self.nodeConstAt(id)).layout;
+    }
+
+    /// Returns the renderer-neutral clip region effective for this node.
+    pub fn readClip(self: *const LayoutTree, id: NodeId) Error!?ClipRect {
+        return (try self.nodeConstAt(id)).layout.clip;
     }
 
     pub fn getLayout(self: *const LayoutTree, id: NodeId) Error!Layout {
@@ -311,6 +341,7 @@ pub const LayoutTree = struct {
         containing: Dimensions,
         forced_size: ?Dimensions,
         is_root: bool,
+        inherited_clip: ?ClipRect,
     ) Error!void {
         const node_ref = try self.nodeAt(id);
         const style_value = node_ref.style;
@@ -323,15 +354,31 @@ pub const LayoutTree = struct {
             .width = resolveDimension(style_value.width, containing.width, if (is_root) containing.width else 0),
             .height = resolveDimension(style_value.height, containing.height, if (is_root) containing.height else 0),
         };
+        if (style_value.aspect_ratio) |ratio| {
+            size = aspectRatioDimension(
+                size.width,
+                size.height,
+                ratio,
+                style_value.width == .auto,
+                style_value.height == .auto,
+            );
+        }
         size.width = clampDimension(size.width, style_value.min_width, style_value.max_width, containing.width);
         size.height = clampDimension(size.height, style_value.min_height, style_value.max_height, containing.height);
-        node_ref.layout = .{ .x = origin.x, .y = origin.y, .width = size.width, .height = size.height };
+        const effective_clip = clipForNode(style_value.overflow, inherited_clip, origin, size);
+        node_ref.layout = .{
+            .x = origin.x,
+            .y = origin.y,
+            .width = size.width,
+            .height = size.height,
+            .clip = effective_clip,
+        };
         node_ref.dirty = false;
         const children = node_ref.children.items;
         if (children.len == 0) return;
 
         if (style_value.display == .grid) {
-            try self.computeGrid(id, origin, size);
+            try self.computeGrid(id, origin, size, effective_clip);
             return;
         }
 
@@ -343,7 +390,7 @@ pub const LayoutTree = struct {
             if (child_node.flex_frozen) continue;
             const main_dimension = if (style_value.flex_direction == .row) child_style.width else child_style.height;
             const basis_dimension = if (child_style.flex_basis == .auto) main_dimension else child_style.flex_basis;
-            child_node.flex_base = resolveDimension(basis_dimension, available_main, 0);
+            child_node.flex_base = boundedResolved(basis_dimension, available_main);
             child_node.flex_size = child_node.flex_base;
         }
 
@@ -419,7 +466,7 @@ pub const LayoutTree = struct {
                 continue;
             }
             if (child_style.position == .absolute) {
-                try self.computeAbsolute(child_id, child_style, size, origin);
+                try self.computeAbsolute(child_id, child_style, size, origin, effective_clip);
                 continue;
             }
 
@@ -438,12 +485,13 @@ pub const LayoutTree = struct {
                 Point{ .x = origin.x + cursor, .y = origin.y }
             else
                 Point{ .x = origin.x, .y = origin.y + cursor };
-            try self.computeNode(child_id, child_origin, size, .{ .width = child_width, .height = child_height }, false);
-            cursor += if (style_value.flex_direction == .row) child_width else child_height;
+            try self.computeNode(child_id, child_origin, size, .{ .width = child_width, .height = child_height }, false, effective_clip);
+            const child_layout = try self.readLayout(child_id);
+            cursor += if (style_value.flex_direction == .row) child_layout.width else child_layout.height;
         }
     }
 
-    fn computeGrid(self: *LayoutTree, id: NodeId, origin: Point, size: Dimensions) Error!void {
+    fn computeGrid(self: *LayoutTree, id: NodeId, origin: Point, size: Dimensions, inherited_clip: ?ClipRect) Error!void {
         const node_ref = try self.nodeAt(id);
         const style_value = node_ref.style;
         const columns = style_value.grid_columns;
@@ -487,7 +535,7 @@ pub const LayoutTree = struct {
                 continue;
             }
             if (child_style.position == .absolute) {
-                try self.computeAbsolute(child_id, child_style, size, origin);
+                try self.computeAbsolute(child_id, child_style, size, origin, inherited_clip);
                 continue;
             }
             var placement: GridPlacement = undefined;
@@ -516,7 +564,7 @@ pub const LayoutTree = struct {
             try self.computeNode(child_id, .{ .x = child_x, .y = child_y }, size, .{
                 .width = child_width,
                 .height = child_height,
-            }, false);
+            }, false, inherited_clip);
         }
     }
 
@@ -540,6 +588,7 @@ pub const LayoutTree = struct {
         style_value: Style,
         containing: Dimensions,
         parent_origin: Point,
+        inherited_clip: ?ClipRect,
     ) Error!void {
         var width = resolveDimension(style_value.width, containing.width, 0);
         var height = resolveDimension(style_value.height, containing.height, 0);
@@ -551,7 +600,7 @@ pub const LayoutTree = struct {
         if (style_value.height == .auto and top != null and bottom != null) height = @max(containing.height - top.? - bottom.?, 0);
         const x = parent_origin.x + (if (left) |value| value else if (right) |value| containing.width - value - width else 0);
         const y = parent_origin.y + (if (top) |value| value else if (bottom) |value| containing.height - value - height else 0);
-        try self.computeNode(id, .{ .x = x, .y = y }, containing, .{ .width = width, .height = height }, false);
+        try self.computeNode(id, .{ .x = x, .y = y }, containing, .{ .width = width, .height = height }, false, inherited_clip);
     }
 
     fn hideNode(self: *LayoutTree, id: NodeId) Error!void {
@@ -658,6 +707,9 @@ fn validateDimensions(value: Dimensions) Error!void {
 }
 
 fn validateStyle(style: Style) Error!void {
+    if (style.aspect_ratio) |ratio| {
+        if (!finite(ratio) or ratio <= 0) return error.InvalidStyle;
+    }
     if (!finite(style.flex_grow) or style.flex_grow < 0 or
         !finite(style.flex_shrink) or style.flex_shrink < 0)
     {
@@ -712,6 +764,39 @@ fn insetValue(dimension: Dimension, parent: f32) ?f32 {
         .length => |value| value,
         .percent => |value| parent * value,
     };
+}
+fn clipForNode(overflow: Overflow, inherited: ?ClipRect, origin: Point, size: Dimensions) ?ClipRect {
+    if (overflow == .visible) return inherited;
+    return intersectClip(inherited, .{
+        .x = boundedCoordinate(origin.x),
+        .y = boundedCoordinate(origin.y),
+        .width = size.width,
+        .height = size.height,
+    });
+}
+
+fn intersectClip(inherited: ?ClipRect, own: ClipRect) ClipRect {
+    const parent = inherited orelse return own;
+    const left = @max(parent.x, own.x);
+    const top = @max(parent.y, own.y);
+    const right = @min(boundedAdd(parent.x, parent.width), boundedAdd(own.x, own.width));
+    const bottom = @min(boundedAdd(parent.y, parent.height), boundedAdd(own.y, own.height));
+    return .{
+        .x = left,
+        .y = top,
+        .width = @max(right - left, 0),
+        .height = @max(bottom - top, 0),
+    };
+}
+
+fn boundedCoordinate(value: f32) f32 {
+    if (finite(value)) return value;
+    if (std.math.isNan(value)) return 0;
+    return if (value < 0) -std.math.floatMax(f32) else std.math.floatMax(f32);
+}
+
+fn boundedAdd(left: f32, right: f32) f32 {
+    return boundedCoordinate(left + right);
 }
 
 test "retained tree mutates children and propagates dirty state" {
@@ -937,4 +1022,60 @@ test "dimension constraints and flex factors reject invalid styles" {
     });
     try tree.compute(root, .{ .width = 100, .height = 10 });
     try std.testing.expectEqual(@as(f32, 40), (try tree.readLayout(root)).width);
+}
+test "aspect ratio fills one missing dimension and preserves explicit dimensions" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+
+    const width_driven = try tree.create(.{
+        .width = .{ .length = 80 },
+        .aspect_ratio = 2,
+    });
+    try tree.compute(width_driven, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(Layout{ .width = 80, .height = 40 }, try tree.readLayout(width_driven));
+
+    const height_driven = try tree.create(.{
+        .height = .{ .length = 30 },
+        .aspect_ratio = 2,
+    });
+    try tree.compute(height_driven, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(Layout{ .width = 60, .height = 30 }, try tree.readLayout(height_driven));
+
+    const explicit = try tree.create(.{
+        .width = .{ .length = 40 },
+        .height = .{ .length = 30 },
+        .aspect_ratio = 9,
+    });
+    try tree.compute(explicit, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(Layout{ .width = 40, .height = 30 }, try tree.readLayout(explicit));
+}
+
+test "aspect ratio accepts only finite positive values" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .aspect_ratio = 0 }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .aspect_ratio = -1 }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .aspect_ratio = std.math.inf(f32) }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .aspect_ratio = std.math.nan(f32) }));
+}
+
+test "clip overflow exposes effective bounded regions to descendants" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 50 },
+        .overflow = .clip,
+    });
+    const child = try tree.create(.{
+        .width = .{ .length = 200 },
+        .height = .{ .length = 80 },
+    });
+    try tree.appendChild(root, child);
+    try tree.compute(root, .{ .width = 100, .height = 50 });
+
+    const expected = ClipRect{ .width = 100, .height = 50 };
+    try std.testing.expectEqual(expected, (try tree.readClip(root)).?);
+    try std.testing.expectEqual(expected, (try tree.readClip(child)).?);
+    try std.testing.expectEqual(expected, (try tree.readLayout(child)).clip.?);
 }
