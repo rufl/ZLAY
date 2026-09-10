@@ -3,9 +3,11 @@
 //! This module intentionally implements only a bounded flex and grid subset:
 //! row and column containers, explicit fixed/fractional grid tracks,
 //! `display: none`, absolute children, and auto/length/percentage dimensions.
-//! There is no text measurement, wrapping, padding, margin, block layout, or
-//! CSS parser. Layout is computed synchronously into caller-owned tree storage;
-//! no scratch allocation is needed by compute.
+//! There is no text-specific measurement, wrapping, padding, margin, block
+//! layout, or CSS parser. An optional caller-supplied intrinsic measurement
+//! callback can provide finite dimensions for auto-sized leaf nodes. Layout is
+//! computed synchronously into caller-owned tree storage; no scratch allocation
+//! is needed by compute.
 
 const std = @import("std");
 pub const Error = error{
@@ -121,6 +123,9 @@ pub const Dimensions = struct {
     width: f32 = 0,
     height: f32 = 0,
 };
+
+/// Supplies intrinsic dimensions for an auto-sized leaf. `available` is the
+/// containing block's size at the leaf's layout position.
 pub const IntrinsicMeasureFunction = *const fn (NodeId, Dimensions, ?*anyopaque) Dimensions;
 
 pub const Point = struct {
@@ -295,9 +300,9 @@ pub const LayoutTree = struct {
         self.computeNode(root_id, .{}, available, null, true, null, null, null) catch |err| return err;
     }
 
-    /// Compute layout using caller-owned intrinsic dimensions for leaf nodes
-    /// whose width or height is `auto`. The callback must not retain tree state
-    /// and its result must contain finite, non-negative dimensions.
+    /// Compute layout using caller-supplied intrinsic dimensions for leaf nodes
+    /// whose width or height is `auto`. Results must contain finite,
+    /// non-negative dimensions.
     pub fn computeWithMeasure(
         self: *LayoutTree,
         root_id: NodeId,
@@ -399,9 +404,11 @@ pub const LayoutTree = struct {
                 style_value.height == .auto,
             );
         }
-        if (intrinsic_measurement) |measured| {
-            if (style_value.width == .auto) size.width = measured.width;
-            if (style_value.height == .auto) size.height = measured.height;
+        if (forced_size == null) {
+            if (intrinsic_measurement) |measured| {
+                if (style_value.width == .auto) size.width = measured.width;
+                if (style_value.height == .auto) size.height = measured.height;
+            }
         }
         size.width = clampDimension(size.width, style_value.min_width, style_value.max_width, containing.width);
         size.height = clampDimension(size.height, style_value.min_height, style_value.max_height, containing.height);
@@ -625,7 +632,16 @@ pub const LayoutTree = struct {
                 try self.computeAbsolute(child_id, child_style, size, origin, inherited_clip, measure, measure_user_data);
                 continue;
             }
-            var placement = (try self.nodeConstAt(child_id)).grid_placement;
+            const child_node = try self.nodeAt(child_id);
+            child_node.intrinsic_measurement = null;
+            if (measure != null and child_node.children.items.len == 0 and
+                (child_style.width == .auto or child_style.height == .auto))
+            {
+                const measured = measure.?(child_id, size, measure_user_data);
+                try validateDimensions(measured);
+                child_node.intrinsic_measurement = measured;
+            }
+            var placement = child_node.grid_placement;
             if (placement == null) {
                 while (auto_cursor < cell_count) : (auto_cursor += 1) {
                     const candidate = GridPlacement{
@@ -650,20 +666,24 @@ pub const LayoutTree = struct {
             }
 
             const resolved_placement = placement.?;
-            const child_width = gridTrackSpanDimension(
+            var child_width = gridTrackSpanDimension(
                 columns,
                 resolved_placement.column,
                 resolved_placement.column_span,
                 size.width,
                 column_gap,
             );
-            const child_height = gridTrackSpanDimension(
+            var child_height = gridTrackSpanDimension(
                 rows,
                 resolved_placement.row,
                 resolved_placement.row_span,
                 size.height,
                 row_gap,
             );
+            if (child_node.intrinsic_measurement) |measured| {
+                if (child_style.width == .auto) child_width = measured.width;
+                if (child_style.height == .auto) child_height = measured.height;
+            }
             const child_x = origin.x + gridTrackOffset(columns, resolved_placement.column, size.width, column_gap);
             const child_y = origin.y + gridTrackOffset(rows, resolved_placement.row, size.height, row_gap);
             try self.computeNode(
@@ -719,8 +739,17 @@ pub const LayoutTree = struct {
         const right = insetValue(style_value.right, containing.width);
         const top = insetValue(style_value.top, containing.height);
         const bottom = insetValue(style_value.bottom, containing.height);
-        if (style_value.width == .auto and left != null and right != null) width = @max(containing.width - left.? - right.?, 0);
-        if (style_value.height == .auto and top != null and bottom != null) height = @max(containing.height - top.? - bottom.?, 0);
+        const node_ref = try self.nodeAt(id);
+        node_ref.intrinsic_measurement = null;
+        if (measure != null and node_ref.children.items.len == 0 and
+            (style_value.width == .auto or style_value.height == .auto))
+        {
+            const measured = measure.?(id, containing, measure_user_data);
+            try validateDimensions(measured);
+            node_ref.intrinsic_measurement = measured;
+            if (style_value.width == .auto) width = measured.width;
+            if (style_value.height == .auto) height = measured.height;
+        }
         const x = parent_origin.x + (if (left) |value| value else if (right) |value| containing.width - value - width else 0);
         const y = parent_origin.y + (if (top) |value| value else if (bottom) |value| containing.height - value - height else 0);
         try self.computeNode(
