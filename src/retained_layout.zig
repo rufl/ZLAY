@@ -469,6 +469,25 @@ pub const LayoutTree = struct {
         self.markDirty(id);
     }
 
+    pub fn setHitTestBehavior(self: *LayoutTree, id: NodeId, behavior: HitTestBehavior) Error!void {
+        if (@intFromEnum(behavior) >= 3) return error.InvalidStyle;
+        const node_ref = try self.nodeAt(id);
+        node_ref.style.hit_test_behavior = behavior;
+        self.markDirty(id);
+    }
+
+    pub fn setHitTestPriority(self: *LayoutTree, id: NodeId, priority: i32) Error!void {
+        const node_ref = try self.nodeAt(id);
+        node_ref.style.hit_test_priority = priority;
+        self.markDirty(id);
+    }
+
+    pub fn setOrder(self: *LayoutTree, id: NodeId, order: i32) Error!void {
+        const node_ref = try self.nodeAt(id);
+        node_ref.style.order = order;
+        self.markDirty(id);
+    }
+
     pub fn parent(self: *const LayoutTree, id: NodeId) Error!?NodeId {
         return (try self.nodeConstAt(id)).parent;
     }
@@ -4168,6 +4187,27 @@ test "retained hit-test priority selects overlapping sibling" {
     try tree.appendChild(root, high);
     try tree.compute(root, .{ .width = 100, .height = 100 });
     try std.testing.expectEqual(high, (try tree.hitTest(root, .{ .x = 10, .y = 10 })).?);
+}
+
+test "retained interaction mutators update hit testing and ordering" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .overlay,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+    });
+    const first = try tree.create(.{ .width = .{ .length = 50 }, .height = .{ .length = 50 } });
+    const second = try tree.create(.{ .width = .{ .length = 50 }, .height = .{ .length = 50 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.compute(root, .{ .width = 100, .height = 100 });
+    try tree.setHitTestBehavior(second, .disabled);
+    try tree.setHitTestPriority(first, 4);
+    try tree.setOrder(first, 2);
+    try std.testing.expect(try tree.isDirty(root));
+    try tree.computeDirty(root, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(first, (try tree.hitTest(root, .{ .x = 10, .y = 10 })).?);
 }
 
 test "retained hit-test behavior filters self without hiding descendants" {
