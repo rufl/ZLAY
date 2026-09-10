@@ -1,7 +1,7 @@
 //! Small retained layout tree for renderer-agnostic UI foundations.
 //!
 //! This module intentionally implements only a bounded flex and grid subset:
-//! row and column containers, explicit fixed/fractional grid tracks,
+//! row and column containers, explicit fixed/auto/fractional grid tracks,
 //! `display: none`, absolute children, auto/length/percentage/stretch
 //! dimensions, and finite pixel padding/margins. There is no text-specific
 //! measurement, wrapping, block layout, or CSS parser. An optional caller-
