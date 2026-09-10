@@ -343,18 +343,27 @@ pub const VirtualListState = struct {
         return @floatCast(max_offset);
     }
 
-    /// Scrolls far enough to reveal an item, clamped to the content extent.
+    /// Scrolls only when needed to reveal an item, clamped to content extent.
     pub fn scrollToIndex(self: *VirtualListState, index: usize) Error!void {
         if (index >= self.item_count) return error.InvalidIndex;
         const item_top = @as(f64, @floatFromInt(index)) * @as(f64, self.item_extent);
+        const item_bottom = item_top + @as(f64, self.item_extent);
+        const current = @as(f64, self.scroll_offset);
+        const viewport_end = current + @as(f64, self.viewport_extent);
         const max_offset = @max(
             @as(f64, @floatFromInt(self.item_count)) * @as(f64, self.item_extent) -
                 @as(f64, self.viewport_extent),
             0,
         );
-        const target = @min(item_top, max_offset);
-        if (!std.math.isFinite(target) or target > std.math.floatMax(f32)) return error.InvalidRange;
-        self.scroll_offset = @floatCast(target);
+        const target = if (item_top < current)
+            item_top
+        else if (item_bottom > viewport_end)
+            item_bottom - @as(f64, self.viewport_extent)
+        else
+            current;
+        const clamped = std.math.clamp(target, 0, max_offset);
+        if (!std.math.isFinite(clamped) or clamped > std.math.floatMax(f32)) return error.InvalidRange;
+        self.scroll_offset = @floatCast(clamped);
     }
 
     pub fn setOverscan(self: *VirtualListState, overscan: usize) void {
@@ -463,7 +472,9 @@ test "virtual list scrollToIndex reveals and clamps target items" {
     try std.testing.expectEqual(@as(f32, 140), try list.maxScrollOffset());
     try std.testing.expectEqual(@as(f32, 0), list.scrollOffset());
     try list.scrollToIndex(3);
-    try std.testing.expectEqual(@as(f32, 60), list.scroll_offset);
+    try std.testing.expectEqual(@as(f32, 20), list.scroll_offset);
+    try list.scrollToIndex(4);
+    try std.testing.expectEqual(@as(f32, 40), list.scroll_offset);
     try list.scrollToIndex(9);
     try std.testing.expectEqual(@as(f32, 140), list.scroll_offset);
     try std.testing.expectError(error.InvalidIndex, list.scrollToIndex(10));
