@@ -660,7 +660,9 @@ rendering, and data ownership remain application-owned.
 
 `zlay.accessibility` provides renderer-neutral semantic metadata and a
 caller-storage-backed registry. Roles, labels, descriptions, and state flags
-are exposed as borrowed values for application adapters. Its reduced-motion
-policy settles opt-in animation calculations deterministically without changing
-the existing Clay-compatible transition path. OS accessibility mappings,
-announcements, focus visuals, and platform input remain application-owned.
+are exposed as borrowed values for application adapters. `firstByRole` returns
+the first matching registration and `countByRole` counts matches without
+allocation. Its reduced-motion policy settles opt-in animation calculations
+deterministically without changing the existing Clay-compatible transition
+path. OS accessibility mappings, announcements, focus visuals, and platform
+input remain application-owned.

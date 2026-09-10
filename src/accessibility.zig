@@ -272,6 +272,22 @@ pub const Registry = struct {
         return &self.storage[index];
     }
 
+    /// Return the first registered metadata entry with `role`.
+    pub fn firstByRole(self: *const Registry, role: Role) ?*const WidgetMetadata {
+        for (self.items()) |*metadata| {
+            if (metadata.role == role) return metadata;
+        }
+        return null;
+    }
+
+    pub fn countByRole(self: *const Registry, role: Role) usize {
+        var count: usize = 0;
+        for (self.items()) |metadata| {
+            if (metadata.role == role) count += 1;
+        }
+        return count;
+    }
+
     pub const find = query;
 
     pub fn contains(self: *const Registry, id: ElementId) bool {
@@ -330,4 +346,19 @@ test "metadata registry supports capacity, update, removal, and query" {
     try std.testing.expectEqual(second, registry.items()[0].id);
     try std.testing.expect(registry.query(first) == null);
     try std.testing.expect(!registry.remove(first));
+}
+
+test "metadata role queries preserve registration order" {
+    var storage: [3]WidgetMetadata = undefined;
+    var registry = Registry.init(&storage);
+    const first = ElementId{ .id = 1 };
+    const second = ElementId{ .id = 2 };
+    const third = ElementId{ .id = 3 };
+    try registry.register(.{ .id = first, .role = .button });
+    try registry.register(.{ .id = second, .role = .link });
+    try registry.register(.{ .id = third, .role = .button });
+    try std.testing.expectEqual(first, registry.firstByRole(.button).?.id);
+    try std.testing.expectEqual(@as(usize, 2), registry.countByRole(.button));
+    try std.testing.expect(registry.firstByRole(.slider) == null);
+    try std.testing.expectEqual(@as(usize, 0), registry.countByRole(.slider));
 }
