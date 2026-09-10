@@ -1541,7 +1541,11 @@ pub const LayoutTree = struct {
             return switch (tracks[index]) {
                 .fixed => |value| value,
                 .auto => try self.gridTrackAutoSize(tracks, index, available, gap, children, horizontal),
-                .fr => |value| weightedShare(remaining, value, fractions),
+                .fr => |value| weightedShare(
+                    boundedSubtract(usable, boundedAdd(fixed, auto)),
+                    value,
+                    fractions,
+                ),
                 .bounded => unreachable,
             };
         }
