@@ -56,6 +56,7 @@ pub const Alignment = enum {
 pub const JustifyContent = enum { flex_start, flex_end, center, space_between, space_around, space_evenly };
 pub const AlignContent = enum { stretch, flex_start, flex_end, center, space_between, space_around, space_evenly };
 pub const Overflow = enum { visible, clip };
+pub const HitTestBehavior = enum { enabled, children_only, disabled };
 
 /// Horizontal and vertical fractions for an overlay anchor.
 fn alignmentFractions(alignment: Alignment) struct { x: f32, y: f32 } {
@@ -258,6 +259,8 @@ pub const Style = struct {
     align_self: AlignSelf = .auto,
     /// Higher values win overlapping retained hit tests; ties prefer depth.
     hit_test_priority: i32 = 0,
+    /// Controls whether this node itself can be returned by `hitTest`.
+    hit_test_behavior: HitTestBehavior = .enabled,
     /// Lower values participate earlier in layout; equal values preserve insertion order.
     order: i32 = 0,
     /// Logical anchor used by relative children of overlay and grid parents.
@@ -611,6 +614,7 @@ pub const LayoutTree = struct {
             const node = slot_entry.node orelse continue;
             const candidate = NodeId{ .index = @intCast(slot_index), .generation = slot_entry.generation };
             if (node.style.display == .none or
+                node.style.hit_test_behavior != .enabled or
                 !containsLayoutPoint(node.layout, point) or
                 !isDescendantOf(self, candidate, root_id))
             {
@@ -3473,6 +3477,7 @@ fn validateStyle(style: Style) Error!void {
     try validateGapSpec(style.min_flex_gap_spec);
     try validateGapSpec(style.max_flex_gap_spec);
     if (@intFromEnum(style.flex_direction) >= 4 or
+        @intFromEnum(style.hit_test_behavior) >= 3 or
         @intFromEnum(style.direction) >= 2 or
         @intFromEnum(style.grid_auto_flow) >= 4 or
         @intFromEnum(style.flex_wrap) >= 3 or
@@ -4146,6 +4151,32 @@ test "retained hit-test priority selects overlapping sibling" {
     try tree.appendChild(root, high);
     try tree.compute(root, .{ .width = 100, .height = 100 });
     try std.testing.expectEqual(high, (try tree.hitTest(root, .{ .x = 10, .y = 10 })).?);
+}
+
+test "retained hit-test behavior filters self without hiding descendants" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 5 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .overlay,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+        .hit_test_behavior = .children_only,
+    });
+    const disabled = try tree.create(.{
+        .width = .{ .length = 40 },
+        .height = .{ .length = 40 },
+        .hit_test_behavior = .disabled,
+        .hit_test_priority = 10,
+    });
+    const enabled = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 20 },
+        .hit_test_priority = 1,
+    });
+    try tree.appendChild(root, disabled);
+    try tree.appendChild(disabled, enabled);
+    try tree.compute(root, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(enabled, (try tree.hitTest(root, .{ .x = 5, .y = 5 })).?);
 }
 
 test "retained flex order preserves stable ties" {

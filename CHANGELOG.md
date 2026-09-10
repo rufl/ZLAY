@@ -28,6 +28,8 @@ All notable changes to ZLAY are recorded here. The format follows
   equal orders preserve insertion order.
 - Equal-priority overlapping targets now follow computed visual order during
   hit testing.
+- Added retained hit-test behavior modes for enabled, children-only, and
+  disabled nodes.
 
 ### Changed
 
