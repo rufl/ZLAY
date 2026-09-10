@@ -581,3 +581,12 @@ supports wrapping or clamping, pointer capture is explicit, and `dispatch`
 returns a renderer-neutral target decision for keyboard focus, pointer capture,
 or hit-test input. Unregistering an element clears any focus or capture owned by
 it.
+
+## Widget state primitives
+
+`zlay.widgets` provides renderer-neutral, caller-storage-backed state for
+buttons, tabs, keyboard-navigable lists, and modal dialogs. Buttons expose
+explicit activation/consumption; tabs and lists preserve registration order
+with wrapping or clamped movement; dialogs provide open, close, toggle, and
+Escape handling. These types contain interaction state only; layout, drawing,
+platform input, and accessibility semantics remain application-owned.
