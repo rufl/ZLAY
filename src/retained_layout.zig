@@ -68,11 +68,18 @@ pub const Style = struct {
     flex_direction: FlexDirection = .row,
     width: Dimension = .auto,
     height: Dimension = .auto,
+    min_width: Dimension = .{ .length = 0 },
+    max_width: Dimension = .auto,
+    min_height: Dimension = .{ .length = 0 },
+    max_height: Dimension = .auto,
     left: Dimension = .auto,
     right: Dimension = .auto,
     top: Dimension = .auto,
     bottom: Dimension = .auto,
     flex_grow: f32 = 0,
+    /// Zero preserves the original no-shrink behavior; set nonzero for flex shrinking.
+    flex_shrink: f32 = 0,
+    flex_basis: Dimension = .auto,
     grid_columns: []const GridTrack = &.{},
     grid_rows: []const GridTrack = &.{},
     grid_column_gap: f32 = 0,
@@ -116,6 +123,9 @@ const Node = struct {
     children: std.ArrayList(NodeId) = .empty,
     layout: Layout = .{},
     grid_placement: ?GridPlacement = null,
+    flex_base: f32 = 0,
+    flex_size: f32 = 0,
+    flex_frozen: bool = false,
     dirty: bool = true,
 };
 
@@ -309,10 +319,12 @@ pub const LayoutTree = struct {
             return;
         }
 
-        const size: Dimensions = forced_size orelse .{
+        var size: Dimensions = forced_size orelse .{
             .width = resolveDimension(style_value.width, containing.width, if (is_root) containing.width else 0),
             .height = resolveDimension(style_value.height, containing.height, if (is_root) containing.height else 0),
         };
+        size.width = clampDimension(size.width, style_value.min_width, style_value.max_width, containing.width);
+        size.height = clampDimension(size.height, style_value.min_height, style_value.max_height, containing.height);
         node_ref.layout = .{ .x = origin.x, .y = origin.y, .width = size.width, .height = size.height };
         node_ref.dirty = false;
         const children = node_ref.children.items;
@@ -323,17 +335,82 @@ pub const LayoutTree = struct {
             return;
         }
 
-        var fixed_main: f32 = 0;
-        var total_grow: f32 = 0;
-        for (children) |child_id| {
-            const child_style = try self.style(child_id);
-            if (child_style.display == .none or child_style.position == .absolute) continue;
-            const main_dimension = if (style_value.flex_direction == .row) child_style.width else child_style.height;
-            if (child_style.flex_grow > 0) total_grow += child_style.flex_grow;
-            fixed_main += resolveDimension(main_dimension, if (style_value.flex_direction == .row) size.width else size.height, 0);
-        }
         const available_main = if (style_value.flex_direction == .row) size.width else size.height;
-        const remaining = @max(available_main - fixed_main, 0);
+        for (children) |child_id| {
+            const child_node = try self.nodeAt(child_id);
+            const child_style = child_node.style;
+            child_node.flex_frozen = child_style.display == .none or child_style.position == .absolute;
+            if (child_node.flex_frozen) continue;
+            const main_dimension = if (style_value.flex_direction == .row) child_style.width else child_style.height;
+            const basis_dimension = if (child_style.flex_basis == .auto) main_dimension else child_style.flex_basis;
+            child_node.flex_base = resolveDimension(basis_dimension, available_main, 0);
+            child_node.flex_size = child_node.flex_base;
+        }
+
+        var iterations: usize = 0;
+        while (iterations <= children.len) : (iterations += 1) {
+            var frozen_sum: f32 = 0;
+            var unfrozen_base: f32 = 0;
+            for (children) |child_id| {
+                const child_node = try self.nodeAt(child_id);
+                if (child_node.flex_frozen) {
+                    frozen_sum += child_node.flex_size;
+                } else {
+                    unfrozen_base += child_node.flex_base;
+                }
+            }
+            const free = available_main - frozen_sum - unfrozen_base;
+            var total_factor: f32 = 0;
+            for (children) |child_id| {
+                const child_node = try self.nodeAt(child_id);
+                if (child_node.flex_frozen) continue;
+                total_factor += if (free >= 0)
+                    child_node.style.flex_grow
+                else
+                    child_node.style.flex_shrink * child_node.flex_base;
+            }
+            if (total_factor == 0) {
+                for (children) |child_id| {
+                    const child_node = try self.nodeAt(child_id);
+                    if (!child_node.flex_frozen) {
+                        child_node.flex_size = clampFlexMain(child_node.flex_base, child_node.style, style_value.flex_direction, available_main);
+                        child_node.flex_frozen = true;
+                    }
+                }
+                break;
+            }
+
+            var froze_any = false;
+            for (children) |child_id| {
+                const child_node = try self.nodeAt(child_id);
+                if (child_node.flex_frozen) continue;
+                const factor = if (free >= 0)
+                    child_node.style.flex_grow
+                else
+                    child_node.style.flex_shrink * child_node.flex_base;
+                const raw = child_node.flex_base + free * factor / total_factor;
+                child_node.flex_size = clampFlexMain(raw, child_node.style, style_value.flex_direction, available_main);
+                if (child_node.flex_size != raw) {
+                    child_node.flex_frozen = true;
+                    froze_any = true;
+                }
+            }
+            if (!froze_any) {
+                for (children) |child_id| {
+                    const child_node = try self.nodeAt(child_id);
+                    if (!child_node.flex_frozen) {
+                        const factor = if (free >= 0)
+                            child_node.style.flex_grow
+                        else
+                            child_node.style.flex_shrink * child_node.flex_base;
+                        child_node.flex_size = child_node.flex_base + free * factor / total_factor;
+                        child_node.flex_frozen = true;
+                    }
+                }
+                break;
+            }
+        }
+
         var cursor: f32 = 0;
         for (children) |child_id| {
             const child_style = try self.style(child_id);
@@ -346,19 +423,17 @@ pub const LayoutTree = struct {
                 continue;
             }
 
-            const grow = if (child_style.flex_grow > 0 and total_grow > 0)
-                remaining * child_style.flex_grow / total_grow
-            else
-                0;
             var child_width = resolveDimension(child_style.width, size.width, 0);
             var child_height = resolveDimension(child_style.height, size.height, 0);
             if (style_value.flex_direction == .row) {
-                if (child_style.width == .auto) child_width = grow;
+                child_width = (try self.nodeConstAt(child_id)).flex_size;
                 if (child_style.height == .auto) child_height = size.height;
             } else {
-                if (child_style.height == .auto) child_height = grow;
+                child_height = (try self.nodeConstAt(child_id)).flex_size;
                 if (child_style.width == .auto) child_width = size.width;
             }
+            child_width = clampDimension(child_width, child_style.min_width, child_style.max_width, size.width);
+            child_height = clampDimension(child_height, child_style.min_height, child_style.max_height, size.height);
             const child_origin = if (style_value.flex_direction == .row)
                 Point{ .x = origin.x + cursor, .y = origin.y }
             else
@@ -514,6 +589,28 @@ pub const LayoutTree = struct {
 fn sameId(left: NodeId, right: NodeId) bool {
     return left.index == right.index and left.generation == right.generation;
 }
+fn clampDimension(value: f32, min_dimension: Dimension, max_dimension: Dimension, parent: f32) f32 {
+    var result = if (finite(value)) @max(value, 0) else std.math.floatMax(f32);
+    if (max_dimension != .auto) {
+        result = @min(result, boundedResolved(max_dimension, parent));
+    }
+    if (min_dimension != .auto) {
+        result = @max(result, boundedResolved(min_dimension, parent));
+    }
+    return result;
+}
+
+fn boundedResolved(dimension: Dimension, parent: f32) f32 {
+    const resolved = resolveDimension(dimension, parent, 0);
+    return if (finite(resolved)) @max(resolved, 0) else std.math.floatMax(f32);
+}
+
+fn clampFlexMain(value: f32, style: Style, direction: FlexDirection, parent_main: f32) f32 {
+    return if (direction == .row)
+        clampDimension(value, style.min_width, style.max_width, parent_main)
+    else
+        clampDimension(value, style.min_height, style.max_height, parent_main);
+}
 
 fn finite(value: f32) bool {
     return std.math.isFinite(value);
@@ -561,7 +658,11 @@ fn validateDimensions(value: Dimensions) Error!void {
 }
 
 fn validateStyle(style: Style) Error!void {
-    if (!finite(style.flex_grow) or style.flex_grow < 0) return error.InvalidStyle;
+    if (!finite(style.flex_grow) or style.flex_grow < 0 or
+        !finite(style.flex_shrink) or style.flex_shrink < 0)
+    {
+        return error.InvalidStyle;
+    }
     if (!finite(style.grid_column_gap) or style.grid_column_gap < 0 or
         !finite(style.grid_row_gap) or style.grid_row_gap < 0 or
         !finite(style.grid_gap) or style.grid_gap < 0)
@@ -577,7 +678,19 @@ fn validateStyle(style: Style) Error!void {
         .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
     };
     if ((style.grid_column == 0) != (style.grid_row == 0)) return error.InvalidStyle;
-    const dimensions = [_]Dimension{ style.width, style.height, style.left, style.right, style.top, style.bottom };
+    const dimensions = [_]Dimension{
+        style.width,
+        style.height,
+        style.min_width,
+        style.max_width,
+        style.min_height,
+        style.max_height,
+        style.flex_basis,
+        style.left,
+        style.right,
+        style.top,
+        style.bottom,
+    };
     for (dimensions) |dimension| switch (dimension) {
         .auto => {},
         .length => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
@@ -734,4 +847,94 @@ test "grid rejects invalid tracks and bounded track capacity" {
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one }));
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one, .grid_rows = &[_]GridTrack{.{ .fr = 0 }} }));
     try std.testing.expectError(error.GridTrackCapacityExceeded, tree.create(.{ .display = .grid, .grid_columns = &two, .grid_rows = &one }));
+}
+test "flex basis distributes growth and explicit shrink without negatives" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 10 } });
+    const first = try tree.create(.{
+        .flex_basis = .{ .length = 10 },
+        .flex_grow = 1,
+        .flex_shrink = 1,
+        .height = .{ .length = 10 },
+    });
+    const second = try tree.create(.{
+        .flex_basis = .{ .length = 20 },
+        .flex_grow = 3,
+        .flex_shrink = 1,
+        .height = .{ .length = 10 },
+    });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.compute(root, .{ .width = 100, .height = 10 });
+    try std.testing.expectEqual(@as(f32, 27.5), (try tree.readLayout(first)).width);
+    try std.testing.expectEqual(@as(f32, 72.5), (try tree.readLayout(second)).width);
+
+    try tree.setStyle(first, .{
+        .flex_basis = .{ .length = 80 },
+        .flex_shrink = 1,
+        .height = .{ .length = 10 },
+    });
+    try tree.setStyle(second, .{
+        .flex_basis = .{ .length = 80 },
+        .flex_shrink = 1,
+        .height = .{ .length = 10 },
+    });
+    try tree.compute(root, .{ .width = 100, .height = 10 });
+    try std.testing.expectEqual(@as(f32, 50), (try tree.readLayout(first)).width);
+    try std.testing.expectEqual(@as(f32, 50), (try tree.readLayout(second)).width);
+}
+
+test "flex min and max dimensions clamp and redistribute free space" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 10 } });
+    const capped = try tree.create(.{
+        .flex_basis = .{ .length = 20 },
+        .flex_grow = 1,
+        .max_width = .{ .length = 30 },
+        .height = .{ .length = 10 },
+    });
+    const flexible = try tree.create(.{
+        .flex_basis = .{ .length = 20 },
+        .flex_grow = 1,
+        .height = .{ .length = 10 },
+    });
+    try tree.appendChild(root, capped);
+    try tree.appendChild(root, flexible);
+    try tree.compute(root, .{ .width = 100, .height = 10 });
+    try std.testing.expectEqual(@as(f32, 30), (try tree.readLayout(capped)).width);
+    try std.testing.expectEqual(@as(f32, 70), (try tree.readLayout(flexible)).width);
+
+    try tree.setStyle(capped, .{
+        .flex_basis = .{ .length = 80 },
+        .flex_shrink = 1,
+        .min_width = .{ .length = 70 },
+        .height = .{ .length = 10 },
+    });
+    try tree.setStyle(flexible, .{
+        .flex_basis = .{ .length = 80 },
+        .flex_shrink = 1,
+        .height = .{ .length = 10 },
+    });
+    try tree.compute(root, .{ .width = 100, .height = 10 });
+    try std.testing.expectEqual(@as(f32, 70), (try tree.readLayout(capped)).width);
+    try std.testing.expectEqual(@as(f32, 30), (try tree.readLayout(flexible)).width);
+}
+
+test "dimension constraints and flex factors reject invalid styles" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .min_width = .{ .length = -1 } }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .max_height = .{ .percent = std.math.nan(f32) } }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_shrink = std.math.inf(f32) }));
+
+    const root = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .min_width = .{ .length = 40 },
+        .max_width = .{ .length = 50 },
+    });
+    try tree.compute(root, .{ .width = 100, .height = 10 });
+    try std.testing.expectEqual(@as(f32, 40), (try tree.readLayout(root)).width);
 }
