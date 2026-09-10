@@ -127,7 +127,7 @@ pub const TextInput = struct {
     }
 
     pub fn setSelection(self: *TextInput, start: usize, end: usize) Error!void {
-        if (start > end or end > self.length) return error.InvalidSelection;
+        if (start > self.length or end > self.length) return error.InvalidSelection;
         self.selection_anchor = start;
         self.cursor = end;
         if (start == end) self.selection_anchor = null;
@@ -374,6 +374,8 @@ pub fn calculateVisibleRange(input: VisibleRangeInput) Error!VisibleRange {
         .end = @min(input.item_count, visible_end +| input.overscan),
     };
 }
+/// Stateless spelling for callers that do not need to retain list inputs.
+pub const visibleRange = calculateVisibleRange;
 
 fn validateVirtualList(item_extent: f32, viewport_extent: f32, scroll_offset: f32) Error!void {
     if (!std.math.isFinite(item_extent) or item_extent <= 0) return error.InvalidItemExtent;
