@@ -102,7 +102,6 @@ pub const Timeline = struct {
         };
     }
 
-
     pub fn deinit(self: *Timeline) void {
         if (self.allocator) |allocator| allocator.free(self.keyframes);
         self.keyframes = &.{};
