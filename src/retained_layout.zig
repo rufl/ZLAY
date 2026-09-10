@@ -324,6 +324,10 @@ const GridPlacement = struct {
     column_span: usize,
     row_span: usize,
 };
+const GridTrackCounts = struct {
+    columns: usize,
+    rows: usize,
+};
 
 const Node = struct {
     style: Style,
@@ -486,6 +490,16 @@ pub const LayoutTree = struct {
     /// A changed dependency invalidates that cache and recomputes the sibling.
     pub fn computeDirty(self: *LayoutTree, dirty_id: NodeId, available: Dimensions) Error!void {
         const root_id = try self.topmostAncestor(dirty_id);
+        try self.computeInternal(root_id, available, true, null, null);
+    }
+
+    /// Recomputes a caller-selected subtree while preserving clean cached
+    /// descendants whose layout inputs are unchanged.
+    pub fn computeDirtySubtree(
+        self: *LayoutTree,
+        root_id: NodeId,
+        available: Dimensions,
+    ) Error!void {
         try self.computeInternal(root_id, available, true, null, null);
     }
 
@@ -1683,21 +1697,14 @@ pub const LayoutTree = struct {
         }
     }
 
-    fn computeGrid(
+    fn prepareGridTracks(
         self: *LayoutTree,
-        id: NodeId,
-        origin: Point,
-        size: Dimensions,
-        inherited_clip: ?ClipRect,
-        measure: ?IntrinsicMeasureFunction,
-        measure_user_data: ?*anyopaque,
-    ) Error!void {
-        const node_ref = try self.nodeAt(id);
-        const style_value = node_ref.style;
-        const children = node_ref.children.items;
+        style_value: Style,
+        children: []const NodeId,
+        column_storage: *[max_supported_grid_tracks]GridTrack,
+        row_storage: *[max_supported_grid_tracks]GridTrack,
+    ) Error!GridTrackCounts {
         const track_limit = @min(self.options.max_grid_tracks, max_supported_grid_tracks);
-        var column_storage: [max_supported_grid_tracks]GridTrack = undefined;
-        var row_storage: [max_supported_grid_tracks]GridTrack = undefined;
         var column_count = style_value.grid_columns.len;
         var row_count = style_value.grid_rows.len;
         @memcpy(column_storage[0..column_count], style_value.grid_columns);
@@ -1711,7 +1718,7 @@ pub const LayoutTree = struct {
                 const required = child_style.grid_column - 1 + child_style.grid_column_span;
                 while (column_count < required) {
                     try appendImplicitTrack(
-                        &column_storage,
+                        column_storage,
                         &column_count,
                         style_value.grid_auto_columns,
                         track_limit,
@@ -1722,7 +1729,7 @@ pub const LayoutTree = struct {
                 const required = child_style.grid_row - 1 + child_style.grid_row_span;
                 while (row_count < required) {
                     try appendImplicitTrack(
-                        &row_storage,
+                        row_storage,
                         &row_count,
                         style_value.grid_auto_rows,
                         track_limit,
@@ -1759,7 +1766,7 @@ pub const LayoutTree = struct {
                 if (child_style.grid_row != 0) {
                     while (search + child_style.grid_column_span > column_count) {
                         try appendImplicitTrack(
-                            &column_storage,
+                            column_storage,
                             &column_count,
                             style_value.grid_auto_columns,
                             track_limit,
@@ -1775,7 +1782,7 @@ pub const LayoutTree = struct {
                 } else if (child_style.grid_column != 0) {
                     while (search + child_style.grid_row_span > row_count) {
                         try appendImplicitTrack(
-                            &row_storage,
+                            row_storage,
                             &row_count,
                             style_value.grid_auto_rows,
                             track_limit,
@@ -1792,14 +1799,14 @@ pub const LayoutTree = struct {
                     while (auto_cursor >= column_count * row_count) {
                         if (gridFlowIsRow(style_value.grid_auto_flow)) {
                             try appendImplicitTrack(
-                                &row_storage,
+                                row_storage,
                                 &row_count,
                                 style_value.grid_auto_rows,
                                 track_limit,
                             );
                         } else {
                             try appendImplicitTrack(
-                                &column_storage,
+                                column_storage,
                                 &column_count,
                                 style_value.grid_auto_columns,
                                 track_limit,
@@ -1831,8 +1838,31 @@ pub const LayoutTree = struct {
             }
             (try self.nodeAt(child_id)).grid_placement = placement;
         }
-        const columns = column_storage[0..column_count];
-        const rows = row_storage[0..row_count];
+        return .{ .columns = column_count, .rows = row_count };
+    }
+
+    fn computeGrid(
+        self: *LayoutTree,
+        id: NodeId,
+        origin: Point,
+        size: Dimensions,
+        inherited_clip: ?ClipRect,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
+    ) Error!void {
+        const node_ref = try self.nodeAt(id);
+        const style_value = node_ref.style;
+        const children = node_ref.children.items;
+        var column_storage: [max_supported_grid_tracks]GridTrack = undefined;
+        var row_storage: [max_supported_grid_tracks]GridTrack = undefined;
+        const track_counts = try self.prepareGridTracks(
+            style_value,
+            children,
+            &column_storage,
+            &row_storage,
+        );
+        const columns = column_storage[0..track_counts.columns];
+        const rows = row_storage[0..track_counts.rows];
         const column_gap = resolveGridGap(style_value, .column, size.width, columns);
         const row_gap = resolveGridGap(style_value, .row, size.height, rows);
         // Measure after placement so auto tracks can use all available
@@ -1898,7 +1928,7 @@ pub const LayoutTree = struct {
                 child_width = resolveContentDimension(
                     child_style.width,
                     cell_width,
-                    available_width,
+                    child_width,
                     measured,
                     child_node.intrinsic_tiers,
                     true,
@@ -1906,7 +1936,7 @@ pub const LayoutTree = struct {
                 child_height = resolveContentDimension(
                     child_style.height,
                     cell_height,
-                    available_height,
+                    child_height,
                     measured,
                     child_node.intrinsic_tiers,
                     false,
@@ -2008,6 +2038,36 @@ pub const LayoutTree = struct {
         }
         return false;
     }
+    fn intrinsicGridTrackSize(
+        self: *const LayoutTree,
+        tracks: []const GridTrack,
+        gap: f32,
+        children: []const NodeId,
+        horizontal: bool,
+        available: f32,
+    ) Error!f32 {
+        var total: f32 = 0;
+        for (tracks, 0..) |track, index| {
+            total = boundedAdd(total, switch (track) {
+                .fixed => |value| value,
+                .bounded => |bounds| bounds.min,
+                .auto => try self.gridTrackAutoSize(
+                    tracks,
+                    index,
+                    available,
+                    gap,
+                    children,
+                    horizontal,
+                ),
+                .fr => 0,
+            });
+        }
+        if (tracks.len > 1) {
+            total = boundedAdd(total, gap * @as(f32, @floatFromInt(tracks.len - 1)));
+        }
+        return total;
+    }
+
     fn gridTrackDimension(
         self: *const LayoutTree,
         tracks: []const GridTrack,
@@ -2132,11 +2192,27 @@ pub const LayoutTree = struct {
             const start = if (horizontal) placement.column else placement.row;
             const span = if (horizontal) placement.column_span else placement.row_span;
             if (index < start or index >= start + span) continue;
-            const measured = child.intrinsic_measurement orelse continue;
-            const desired = @min(
-                @max(if (horizontal) measured.width else measured.height, 0),
-                @max(available, 0),
+            const dimension = if (horizontal) child.style.width else child.style.height;
+            const measured: Dimensions = child.intrinsic_measurement orelse .{};
+            var desired = intrinsicResolvedDimension(
+                dimension,
+                available,
+                if (horizontal) measured.width else measured.height,
             );
+            desired = clampDimensionWithIntrinsic(
+                desired,
+                if (horizontal) child.style.min_width else child.style.min_height,
+                if (horizontal) child.style.max_width else child.style.max_height,
+                available,
+                child.intrinsic_tiers,
+                needsIntrinsicMeasurement(dimension),
+                horizontal,
+            );
+            const margins = if (horizontal)
+                horizontalEdges(child.style.margin)
+            else
+                verticalEdges(child.style.margin);
+            desired = @min(boundedAdd(desired, margins), @max(available, 0));
             var fixed_span: f32 = 0;
             var auto_count: usize = 0;
             for (0..span) |offset| {
@@ -2462,7 +2538,7 @@ pub const LayoutTree = struct {
                         content.width = @max(content.width, outer_width);
                         content.height = @max(content.height, outer_height);
                     },
-                    .grid => {},
+                    .grid => (try self.nodeAt(child_id)).intrinsic_measurement = child_size,
                     .none => unreachable,
                 }
             }
@@ -2485,23 +2561,31 @@ pub const LayoutTree = struct {
                 }
             }
             if (style_value.display == .grid) {
-                content.width = intrinsicGridTracks(
-                    style_value.grid_columns,
-                    resolveGridGap(
-                        style_value,
-                        .column,
-                        containing.width,
-                        style_value.grid_columns,
-                    ),
+                var column_storage: [max_supported_grid_tracks]GridTrack = undefined;
+                var row_storage: [max_supported_grid_tracks]GridTrack = undefined;
+                const track_counts = try self.prepareGridTracks(
+                    style_value,
+                    children,
+                    &column_storage,
+                    &row_storage,
                 );
-                content.height = intrinsicGridTracks(
-                    style_value.grid_rows,
-                    resolveGridGap(
-                        style_value,
-                        .row,
-                        containing.height,
-                        style_value.grid_rows,
-                    ),
+                const columns = column_storage[0..track_counts.columns];
+                const rows = row_storage[0..track_counts.rows];
+                const column_gap = resolveGridGap(style_value, .column, containing.width, columns);
+                const row_gap = resolveGridGap(style_value, .row, containing.height, rows);
+                content.width = try self.intrinsicGridTrackSize(
+                    columns,
+                    column_gap,
+                    children,
+                    true,
+                    containing.width,
+                );
+                content.height = try self.intrinsicGridTrackSize(
+                    rows,
+                    row_gap,
+                    children,
+                    false,
+                    containing.height,
                 );
             }
         }
@@ -3835,6 +3919,35 @@ test "rtl grid maps logical columns from the right edge" {
     try tree.compute(root, .{ .width = 50, .height = 10 });
     try std.testing.expectEqual(Layout{ .x = 30, .width = 20, .height = 10 }, try tree.readLayout(first));
     try std.testing.expectEqual(Layout{ .x = 20, .width = 10, .height = 10 }, try tree.readLayout(second));
+}
+
+test "auto-sized grid includes implicit tracks in intrinsic size" {
+    const columns = [_]GridTrack{GridTrack.fixedPx(20)};
+    const rows = [_]GridTrack{GridTrack.fixedPx(10)};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4, .max_grid_tracks = 4 });
+    defer tree.deinit();
+
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+    });
+    const grid = try tree.create(.{
+        .display = .grid,
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+        .grid_auto_rows = GridTrack.fixedPx(15),
+    });
+    const first = try tree.create(.{ .width = .{ .stretch = 1 }, .height = .{ .stretch = 1 } });
+    const second = try tree.create(.{ .width = .{ .stretch = 1 }, .height = .{ .stretch = 1 } });
+    try tree.appendChild(root, grid);
+    try tree.appendChild(grid, first);
+    try tree.appendChild(grid, second);
+
+    try tree.compute(root, .{ .width = 100, .height = 100 });
+
+    try std.testing.expectEqual(Layout{ .width = 20, .height = 25 }, try tree.readLayout(grid));
+    try std.testing.expectEqual(Layout{ .width = 20, .height = 10 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .y = 10, .width = 20, .height = 15 }, try tree.readLayout(second));
 }
 
 test "grid auto flow grows implicit rows and columns" {

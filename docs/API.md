@@ -580,9 +580,11 @@ clip rectangles.
 The grid subset supports fixed, intrinsic-auto, fractional, and bounded
 `GridTrack.minmax` tracks; shared or axis-specific typed gaps; explicit,
 partially specified, sparse automatic, or dense automatic placement; row- or
-column-major auto flow; implicit tracks; and row/column spans. Grid items honor
-explicit, percentage, stretch, and intrinsic sizes within their cells; logical
-nine-position alignment and per-axis auto margins place remaining cell space.
+column-major auto flow; implicit tracks; and row/column spans. Intrinsic grid
+sizing includes implicit tracks and fixed or measured child contributions to
+auto tracks. Grid items honor explicit, percentage, stretch, and intrinsic
+sizes within their cells; logical nine-position alignment and per-axis auto
+margins place remaining cell space.
 Track and tree limits are explicit: `max_supported_grid_tracks` bounds
 allocation-free grid scratch to 256 tracks per axis, while
 `max_supported_tree_depth` bounds layout descent to 256 levels.
@@ -591,18 +593,23 @@ Hidden-tree and destruction traversal are iterative.
 `computeWithMeasure` supplies allocation-free intrinsic leaf measurement.
 `computeWithMeasureTiers` adds minimum, preferred, and maximum intrinsic
 dimensions. Width-dependent leaves are remeasured after flex shrink.
-`computeDirty` and `computeDirtyWithMeasure` reuse clean subtree layouts only
-when cached origin, containing-block, forced-size, root-size, and clip inputs
-still match; changed dependencies are recomputed. Block flow, CSS parsing, and
-complete browser layout semantics remain outside this API.
+`computeDirty` and `computeDirtyWithMeasure` restart from the topmost ancestor;
+`computeDirtySubtree` keeps a caller-selected root. All three reuse clean
+subtree layouts only when cached origin, containing-block, forced-size,
+root-size, and clip inputs still match. Changed dependencies are recomputed.
+Block flow, CSS parsing, and complete browser layout semantics remain outside
+this API.
 
 `zlay.retained_store` provides caller-owned generational records for ECS-style
 applications that keep authoritative topology, style, and layout data outside
 `LayoutTree`. It supplies bounded node records, flat child buckets, stale-ID
-detection, and explicit style/layout mutation. `StoreSolver` reuses an internal
-`LayoutTree`, mirrors the caller-owned subtree, runs retained layout, and writes
-results back to the requested store subtree through caller-owned ID mapping
-storage.
+detection, and explicit style/layout mutation. Styles must change through
+`setStyle` or `update`, which advances each record's solver-visible revision.
+`StoreSolver` keeps mirror topology and synchronization scratch persistent:
+stable styles are not recopied, only changed parent lists are rebuilt, dirty
+layout starts at the requested subtree, and one bounded subtree traversal
+writes results back. `lastSyncStats` reports style updates, rebuilt parents,
+and written nodes for profiling and regression checks.
 
 ## Interaction foundation
 

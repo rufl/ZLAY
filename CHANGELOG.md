@@ -13,6 +13,8 @@ All notable changes to ZLAY are recorded here. The format follows
   explicit and intrinsic grid-item sizing, logical cell alignment, grid auto
   margins, intrinsic content-sizing keywords, and an external `RetainedStore`
   solver bridge.
+- Added pinned Taffy and Morphorm overlap fixtures for flex distribution,
+  implicit and intrinsic-auto grids, and dirty-layout equivalence.
 
 ### Changed
 
@@ -22,6 +24,14 @@ All notable changes to ZLAY are recorded here. The format follows
   and distribute remaining positioned space through auto margins. Absolute and
   overlay children honor intrinsic sizing tiers consistently with flex and
   grid children.
+- Auto-sized grids now include implicit tracks and fixed or measured child
+  contributions to intrinsic-auto tracks. Grid items with cached intrinsic
+  data retain their explicit dimensions.
+- `StoreSolver` now preserves synchronized styles and topology across computes,
+  rebuilds only changed parent lists, performs dirty-subtree layout, and writes
+  results through one bounded subtree traversal. `NodeRecord.style_revision`
+  makes store API mutations explicit, and `lastSyncStats` exposes the work
+  performed by each compute.
 
 ## [0.1.0] - 2026-08-02
 

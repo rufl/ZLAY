@@ -29,12 +29,15 @@ pub const Error = error{
 /// The mutable state retained for one node slot.
 ///
 /// The store owns no copy of this type: `records` passed to `init` is the
-/// backing table and remains caller-owned. `generation` and `live` are managed
-/// by the store and should not be changed directly while it is in use.
+/// backing table and remains caller-owned. `generation`, `live`, and
+/// `style_revision` are managed by the store and must not be changed directly.
+/// Styles must be changed through `setStyle` or `update` so persistent solvers
+/// observe the mutation.
 pub const NodeRecord = struct {
     generation: u32 = 1,
     live: bool = false,
     style: Style = .{},
+    style_revision: u64 = 1,
     layout: Layout = .{},
     parent: ?NodeId = null,
     child_count: usize = 0,
@@ -152,7 +155,10 @@ pub const RetainedStore = struct {
     /// topology cannot be changed accidentally through this operation.
     pub fn update(self: *RetainedStore, id: NodeId, change: Update) Error!void {
         const record = &self.records[try self.indexFor(id)];
-        if (change.style) |style_value| record.style = style_value;
+        if (change.style) |style_value| {
+            record.style = style_value;
+            record.style_revision = nextRevision(record.style_revision);
+        }
         if (change.layout) |layout_value| record.layout = layout_value;
     }
 
@@ -281,32 +287,61 @@ pub const RetainedStore = struct {
     fn nextGeneration(generation: u32) u32 {
         return if (generation == std.math.maxInt(u32)) 1 else generation + 1;
     }
+
+    fn nextRevision(revision: u64) u64 {
+        return if (revision == std.math.maxInt(u64)) 1 else revision + 1;
+    }
 };
 
 // `Store` is the concise spelling used by callers that only need one retained
 // storage instance; the descriptive name remains the canonical declaration.
 pub const Store = RetainedStore;
 
-/// Solver bridge for caller-owned `RetainedStore` records.
+/// Persistent solver bridge for caller-owned `RetainedStore` records.
 ///
 /// `mirror_ids` is caller-owned mapping storage with one entry per record.
-/// The internal layout tree is allocated once; repeated stable computes reuse
-/// its node and child capacities. Store topology, styles, and resulting layouts
-/// remain authoritative.
+/// The internal layout tree, style revisions, topology, and traversal scratch
+/// persist across computes. Stable records are not copied or marked dirty;
+/// changed parent lists alone are rebuilt. Results are written by one bounded
+/// traversal of the requested store subtree.
 pub const StoreSolver = struct {
+    const SyncState = struct {
+        generation: u32 = 0,
+        style_revision: u64 = 0,
+    };
+
+    pub const SyncStats = struct {
+        style_updates: usize = 0,
+        rebuilt_parents: usize = 0,
+        written_nodes: usize = 0,
+    };
+
+    allocator: std.mem.Allocator,
     tree: retained_layout.LayoutTree,
     mirror_ids: []NodeId,
+    sync_states: []SyncState,
+    index_scratch: []usize,
+    stats: SyncStats = .{},
 
     pub fn init(
         allocator: std.mem.Allocator,
         mirror_ids: []NodeId,
         options: LayoutOptions,
     ) LayoutError!StoreSolver {
+        const sync_states = allocator.alloc(SyncState, mirror_ids.len) catch return error.OutOfMemory;
+        errdefer allocator.free(sync_states);
+        @memset(sync_states, .{});
+        const index_scratch = allocator.alloc(usize, mirror_ids.len) catch return error.OutOfMemory;
+        errdefer allocator.free(index_scratch);
+
         var normalized = options;
         normalized.max_nodes = mirror_ids.len;
         var result = StoreSolver{
+            .allocator = allocator,
             .tree = retained_layout.LayoutTree.init(allocator, normalized),
             .mirror_ids = mirror_ids,
+            .sync_states = sync_states,
+            .index_scratch = index_scratch,
         };
         errdefer result.tree.deinit();
         for (mirror_ids) |*mirror_id| {
@@ -317,7 +352,13 @@ pub const StoreSolver = struct {
 
     pub fn deinit(self: *StoreSolver) void {
         self.tree.deinit();
+        self.allocator.free(self.index_scratch);
+        self.allocator.free(self.sync_states);
         self.* = undefined;
+    }
+
+    pub fn lastSyncStats(self: *const StoreSolver) SyncStats {
+        return self.stats;
     }
 
     pub fn compute(
@@ -328,47 +369,103 @@ pub const StoreSolver = struct {
     ) (Error || LayoutError)!void {
         if (store.records.len != self.mirror_ids.len) return error.InvalidStorage;
         const root_index = try store.indexFor(root_id);
+        self.stats = .{};
 
-        // Detach before rebuilding so reparenting and ordering changes are
-        // accepted regardless of record traversal order. ArrayList capacities
-        // remain allocated and are reused by subsequent computes.
-        for (self.mirror_ids) |mirror_parent| {
+        try self.syncStyles(store);
+        try self.syncTopology(store);
+        try self.tree.computeDirtySubtree(self.mirror_ids[root_index], available);
+        try self.writeSubtree(store, root_index);
+    }
+
+    fn syncStyles(self: *StoreSolver, store: *const RetainedStore) LayoutError!void {
+        for (store.records, 0..) |record, index| {
+            const state = &self.sync_states[index];
+            if (!record.live) {
+                if (state.generation != 0) {
+                    try self.tree.setStyle(self.mirror_ids[index], .{ .display = .none });
+                    state.* = .{};
+                    self.stats.style_updates += 1;
+                }
+                continue;
+            }
+            if (state.generation == record.generation and
+                state.style_revision == record.style_revision)
+            {
+                continue;
+            }
+            try self.tree.setStyle(self.mirror_ids[index], record.style);
+            state.* = .{
+                .generation = record.generation,
+                .style_revision = record.style_revision,
+            };
+            self.stats.style_updates += 1;
+        }
+    }
+
+    fn syncTopology(self: *StoreSolver, store: *const RetainedStore) (Error || LayoutError)!void {
+        var changed_count: usize = 0;
+        for (store.records, 0..) |record, index| {
+            if (try self.topologyMatches(store, record, index)) continue;
+            self.index_scratch[changed_count] = index;
+            changed_count += 1;
+        }
+
+        for (self.index_scratch[0..changed_count]) |index| {
+            const mirror_parent = self.mirror_ids[index];
             while (try self.tree.childCount(mirror_parent) != 0) {
                 const last = try self.tree.childCount(mirror_parent) - 1;
-                const mirror_child = try self.tree.childAt(mirror_parent, last);
-                try self.tree.removeChild(mirror_parent, mirror_child);
+                try self.tree.removeChild(
+                    mirror_parent,
+                    try self.tree.childAt(mirror_parent, last),
+                );
             }
         }
-
-        for (store.records, 0..) |record, index| {
-            try self.tree.setStyle(
-                self.mirror_ids[index],
-                if (record.live) record.style else .{ .display = .none },
-            );
-        }
-        for (store.records, 0..) |record, index| {
+        for (self.index_scratch[0..changed_count]) |index| {
+            const record = store.records[index];
             if (!record.live) continue;
             for (store.childBucket(index)[0..record.child_count]) |child_id| {
                 const child_index = try store.indexFor(child_id);
                 try self.tree.appendChild(self.mirror_ids[index], self.mirror_ids[child_index]);
             }
         }
-
-        try self.tree.compute(self.mirror_ids[root_index], available);
-        for (store.records, 0..) |record, index| {
-            if (!record.live or !try belongsToSubtree(store, index, root_id)) continue;
-            store.records[index].layout = try self.tree.readLayout(self.mirror_ids[index]);
-        }
+        self.stats.rebuilt_parents = changed_count;
     }
 
-    fn belongsToSubtree(store: *const RetainedStore, index: usize, root_id: NodeId) Error!bool {
-        var current = NodeId{
-            .index = @intCast(index),
-            .generation = store.records[index].generation,
-        };
-        while (true) {
-            if (RetainedStore.sameId(current, root_id)) return true;
-            current = (try store.parent(current)) orelse return false;
+    fn topologyMatches(
+        self: *const StoreSolver,
+        store: *const RetainedStore,
+        record: NodeRecord,
+        index: usize,
+    ) (Error || LayoutError)!bool {
+        const desired_count = if (record.live) record.child_count else 0;
+        if (try self.tree.childCount(self.mirror_ids[index]) != desired_count) return false;
+        if (!record.live) return true;
+        for (store.childBucket(index)[0..record.child_count], 0..) |child_id, child_index| {
+            const store_child_index = try store.indexFor(child_id);
+            const mirror_child = try self.tree.childAt(self.mirror_ids[index], child_index);
+            if (!RetainedStore.sameId(mirror_child, self.mirror_ids[store_child_index])) return false;
+        }
+        return true;
+    }
+
+    fn writeSubtree(
+        self: *StoreSolver,
+        store: *RetainedStore,
+        root_index: usize,
+    ) (Error || LayoutError)!void {
+        var stack_count: usize = 1;
+        self.index_scratch[0] = root_index;
+        while (stack_count != 0) {
+            stack_count -= 1;
+            const index = self.index_scratch[stack_count];
+            store.records[index].layout = try self.tree.readLayout(self.mirror_ids[index]);
+            self.stats.written_nodes += 1;
+            const record = store.records[index];
+            for (store.childBucket(index)[0..record.child_count]) |child_id| {
+                const child_index = try store.indexFor(child_id);
+                self.index_scratch[stack_count] = child_index;
+                stack_count += 1;
+            }
         }
     }
 };
@@ -402,10 +499,20 @@ test "store solver writes layouts back from caller-owned topology" {
     );
     defer solver.deinit();
     try solver.compute(&store, root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(StoreSolver.SyncStats{
+        .style_updates = 4,
+        .rebuilt_parents = 1,
+        .written_nodes = 3,
+    }, solver.lastSyncStats());
     try std.testing.expectEqual(Layout{ .width = 100, .height = 50 }, try store.layout(root));
     try std.testing.expectEqual(Layout{ .width = 20, .height = 10 }, try store.layout(first));
     try std.testing.expectEqual(Layout{ .x = 20, .width = 30, .height = 12 }, try store.layout(second));
     try std.testing.expectEqual(@as(f32, 777), (try store.layout(unrelated)).x);
+
+    try solver.compute(&store, root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(StoreSolver.SyncStats{
+        .written_nodes = 3,
+    }, solver.lastSyncStats());
 
     try store.setStyle(root, .{
         .width = .{ .length = 100 },
@@ -413,7 +520,56 @@ test "store solver writes layouts back from caller-owned topology" {
         .flex_direction = .column,
     });
     try solver.compute(&store, root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(StoreSolver.SyncStats{
+        .style_updates = 1,
+        .written_nodes = 3,
+    }, solver.lastSyncStats());
     try std.testing.expectEqual(Layout{ .y = 10, .width = 30, .height = 12 }, try store.layout(second));
+}
+
+test "store solver rebuilds only changed parent topology" {
+    var records: [4]NodeRecord = undefined;
+    var children_storage: [16]NodeId = undefined;
+    var store = try RetainedStore.init(&records, &children_storage);
+    const root = try store.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+    });
+    const left = try store.create(.{
+        .width = .{ .length = 40 },
+        .height = .{ .length = 20 },
+    });
+    const right = try store.create(.{
+        .width = .{ .length = 40 },
+        .height = .{ .length = 20 },
+    });
+    const item = try store.create(.{
+        .width = .{ .length = 10 },
+        .height = .{ .length = 10 },
+    });
+    try store.appendChild(root, left);
+    try store.appendChild(root, right);
+    try store.appendChild(left, item);
+
+    var mirror_ids: [4]NodeId = undefined;
+    var solver = try StoreSolver.init(
+        std.testing.allocator,
+        &mirror_ids,
+        .{ .max_children_per_node = 4 },
+    );
+    defer solver.deinit();
+    try solver.compute(&store, root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 0), (try store.layout(item)).x);
+    try std.testing.expectEqual(@as(usize, 2), solver.lastSyncStats().rebuilt_parents);
+
+    try store.removeChild(left, item);
+    try store.appendChild(right, item);
+    try solver.compute(&store, root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 40), (try store.layout(item)).x);
+    try std.testing.expectEqual(StoreSolver.SyncStats{
+        .rebuilt_parents = 2,
+        .written_nodes = 4,
+    }, solver.lastSyncStats());
 }
 
 test "caller-owned records support create lookup and update" {

@@ -167,6 +167,7 @@ test {
     _ = @import("allocation_discipline_tests.zig");
     _ = @import("debug_inspector_tests.zig");
     _ = @import("public_metadata_tests.zig");
+    _ = @import("retained_reference_tests.zig");
 }
 
 test "root exposes the complete public helper and callback facade" {
