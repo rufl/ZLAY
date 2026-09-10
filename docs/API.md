@@ -650,7 +650,8 @@ and pure virtual-list range calculations. `TextInput` supports cursor movement,
 selection, insertion, deletion, and bounded capacity. Virtual-list helpers
 return deterministic half-open visible ranges with optional overscan;
 `scrollOffset` reports the current offset, `maxScrollOffset` reports the
-finite content bound, `pageNext` and `pagePrevious` move by one viewport with
+finite content bound, `clampScrollOffset` reconciles offsets after count or
+viewport changes, `pageNext` and `pagePrevious` move by one viewport with
 clamping, and `VirtualListState.scrollToIndex` changes the offset only when
 needed to reveal a valid item. UTF-8 grapheme behavior, font measurement, row
 rendering, and data ownership remain application-owned.

@@ -314,6 +314,12 @@ pub const VirtualListState = struct {
         self.item_count = item_count;
     }
 
+    /// Reconciles the current offset after item-count or viewport changes.
+    pub fn clampScrollOffset(self: *VirtualListState) Error!void {
+        const maximum = try self.maxScrollOffset();
+        if (self.scroll_offset > maximum) self.scroll_offset = maximum;
+    }
+
     pub fn setItemExtent(self: *VirtualListState, item_extent: f32) Error!void {
         try validateVirtualList(item_extent, self.viewport_extent, self.scroll_offset);
         self.item_extent = item_extent;
@@ -491,6 +497,18 @@ test "virtual list scrollToIndex reveals and clamps target items" {
     try list.scrollToIndex(9);
     try std.testing.expectEqual(@as(f32, 140), list.scroll_offset);
     try std.testing.expectError(error.InvalidIndex, list.scrollToIndex(10));
+}
+
+test "virtual list offset reconciliation follows item-count shrink" {
+    var list = try VirtualListState.init(10, 20, 60, 140, 0);
+    list.setItemCount(2);
+    try list.clampScrollOffset();
+    try std.testing.expectEqual(@as(f32, 0), list.scrollOffset());
+    list.setItemCount(10);
+    try list.setScrollOffset(140);
+    try list.setViewportExtent(100);
+    try list.clampScrollOffset();
+    try std.testing.expectEqual(@as(f32, 100), list.scrollOffset());
 }
 
 test "virtual list page navigation clamps at both ends" {
