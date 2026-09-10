@@ -180,9 +180,20 @@ pub const Dimensions = struct {
     height: f32 = 0,
 };
 
+/// Supplies one intrinsic minimum, preferred, and maximum size for an auto-sized leaf.
+pub const IntrinsicDimensions = struct {
+    min: Dimensions = .{},
+    preferred: Dimensions = .{},
+    max: Dimensions = .{},
+};
+
 /// Supplies intrinsic dimensions for an auto-sized leaf. `available` is the
 /// containing block's size at the leaf's layout position.
 pub const IntrinsicMeasureFunction = *const fn (NodeId, Dimensions, ?*anyopaque) Dimensions;
+
+/// Supplies intrinsic size tiers for an auto-sized leaf. Each axis must satisfy
+/// `min <= preferred <= max`.
+pub const IntrinsicMeasureTiersFunction = *const fn (NodeId, Dimensions, ?*anyopaque) IntrinsicDimensions;
 
 pub const Point = struct {
     x: f32 = 0,
@@ -216,6 +227,7 @@ const Node = struct {
     layout: Layout = .{},
     grid_placement: ?GridPlacement = null,
     intrinsic_measurement: ?Dimensions = null,
+    intrinsic_tiers: ?IntrinsicDimensions = null,
     flex_base: f32 = 0,
     flex_size: f32 = 0,
     flex_frozen: bool = false,
@@ -356,6 +368,24 @@ pub const LayoutTree = struct {
         self.computeNode(root_id, .{}, available, null, true, null, null, null) catch |err| return err;
     }
 
+    /// Compute layout using caller-supplied intrinsic minimum, preferred, and
+    /// maximum dimensions for auto-sized leaf nodes.
+    pub fn computeWithMeasureTiers(
+        self: *LayoutTree,
+        root_id: NodeId,
+        available: Dimensions,
+        measure: IntrinsicMeasureTiersFunction,
+        user_data: ?*anyopaque,
+    ) Error!void {
+        try validateDimensions(available);
+        _ = try self.nodeAt(root_id);
+        var adapter = TierMeasureAdapter{
+            .tree = self,
+            .measure = measure,
+            .user_data = user_data,
+        };
+        self.computeNode(root_id, .{}, available, null, true, null, measureIntrinsicTiers, &adapter) catch |err| return err;
+    }
     /// Compute layout using caller-supplied intrinsic dimensions for leaf nodes
     /// whose width or height is `auto`. Results must contain finite,
     /// non-negative dimensions.
@@ -437,14 +467,18 @@ pub const LayoutTree = struct {
 
         const children = node_ref.children.items;
         const supplied_measurement = node_ref.intrinsic_measurement;
+        const supplied_tiers = node_ref.intrinsic_tiers;
         node_ref.intrinsic_measurement = null;
+        node_ref.intrinsic_tiers = null;
         var intrinsic_measurement = supplied_measurement;
+        var intrinsic_tiers = supplied_tiers;
         if (intrinsic_measurement == null and measure != null and children.len == 0 and
             (style_value.width == .auto or style_value.height == .auto))
         {
             const measured = measure.?(id, containing, measure_user_data);
             try validateDimensions(measured);
             intrinsic_measurement = measured;
+            intrinsic_tiers = node_ref.intrinsic_tiers;
         }
 
         var size: Dimensions = forced_size orelse .{
@@ -466,8 +500,24 @@ pub const LayoutTree = struct {
                 if (style_value.height == .auto) size.height = measured.height;
             }
         }
-        size.width = clampDimension(size.width, style_value.min_width, style_value.max_width, containing.width);
-        size.height = clampDimension(size.height, style_value.min_height, style_value.max_height, containing.height);
+        size.width = clampDimensionWithIntrinsic(
+            size.width,
+            style_value.min_width,
+            style_value.max_width,
+            containing.width,
+            intrinsic_tiers,
+            style_value.width == .auto,
+            true,
+        );
+        size.height = clampDimensionWithIntrinsic(
+            size.height,
+            style_value.min_height,
+            style_value.max_height,
+            containing.height,
+            intrinsic_tiers,
+            style_value.height == .auto,
+            false,
+        );
 
         const effective_clip = clipForNode(style_value.overflow, inherited_clip, origin, size);
         node_ref.layout = .{
@@ -504,6 +554,7 @@ pub const LayoutTree = struct {
             const child_style = child_node.style;
             child_node.flex_frozen = child_style.display == .none or child_style.position == .absolute;
             child_node.intrinsic_measurement = null;
+            child_node.intrinsic_tiers = null;
             if (!child_node.flex_frozen and measure != null and child_node.children.items.len == 0 and
                 (child_style.width == .auto or child_style.height == .auto))
             {
@@ -568,7 +619,13 @@ pub const LayoutTree = struct {
                 for (children) |child_id| {
                     const child_node = try self.nodeAt(child_id);
                     if (!child_node.flex_frozen) {
-                        child_node.flex_size = clampFlexMain(child_node.flex_base, child_node.style, style_value.flex_direction, available_main);
+                        child_node.flex_size = clampFlexMain(
+                            child_node.flex_base,
+                            child_node.style,
+                            style_value.flex_direction,
+                            available_main,
+                            child_node.intrinsic_tiers,
+                        );
                         child_node.flex_frozen = true;
                     }
                 }
@@ -581,7 +638,13 @@ pub const LayoutTree = struct {
                 if (child_node.flex_frozen) continue;
                 const factor = flexMainFactor(child_node.style, style_value.flex_direction, free, child_node.flex_base);
                 const raw = child_node.flex_base + weightedShare(free, factor, total_factor);
-                child_node.flex_size = clampFlexMain(raw, child_node.style, style_value.flex_direction, available_main);
+                child_node.flex_size = clampFlexMain(
+                    raw,
+                    child_node.style,
+                    style_value.flex_direction,
+                    available_main,
+                    child_node.intrinsic_tiers,
+                );
                 if (child_node.flex_size != raw) {
                     child_node.flex_frozen = true;
                     froze_any = true;
@@ -653,8 +716,24 @@ pub const LayoutTree = struct {
                         boundedSubtract(content_size.width, cross_margin);
                 }
             }
-            child_width = clampDimension(child_width, child_style.min_width, child_style.max_width, content_size.width);
-            child_height = clampDimension(child_height, child_style.min_height, child_style.max_height, content_size.height);
+            child_width = clampDimensionWithIntrinsic(
+                child_width,
+                child_style.min_width,
+                child_style.max_width,
+                content_size.width,
+                child_node.intrinsic_tiers,
+                child_style.width == .auto,
+                true,
+            );
+            child_height = clampDimensionWithIntrinsic(
+                child_height,
+                child_style.min_height,
+                child_style.max_height,
+                content_size.height,
+                child_node.intrinsic_tiers,
+                child_style.height == .auto,
+                false,
+            );
             const cross_size = if (style_value.flex_direction == .row) child_height else child_width;
             const cross_offset = crossAxisOffset(
                 child_align,
@@ -872,7 +951,13 @@ pub const LayoutTree = struct {
                     const item_node = try self.nodeAt(child_id);
                     const item_style = item_node.style;
                     if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
-                    item_node.flex_size = clampFlexMain(item_node.flex_base, item_style, direction, available_main);
+                    item_node.flex_size = clampFlexMain(
+                        item_node.flex_base,
+                        item_style,
+                        direction,
+                        available_main,
+                        item_node.intrinsic_tiers,
+                    );
                     item_node.flex_frozen = true;
                 }
                 break;
@@ -884,7 +969,13 @@ pub const LayoutTree = struct {
                 if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
                 const factor = flexMainFactor(item_style, direction, free, item_node.flex_base);
                 const raw = boundedAdd(item_node.flex_base, weightedShare(free, factor, total_factor));
-                item_node.flex_size = clampFlexMain(raw, item_style, direction, available_main);
+                item_node.flex_size = clampFlexMain(
+                    raw,
+                    item_style,
+                    direction,
+                    available_main,
+                    item_node.intrinsic_tiers,
+                );
                 if (item_node.flex_size != raw) {
                     item_node.flex_frozen = true;
                     froze_any = true;
@@ -925,11 +1016,14 @@ pub const LayoutTree = struct {
                     cross_size = if (direction == .row) measured.height else measured.width;
                 }
             }
-            cross_size = clampDimension(
+            cross_size = clampDimensionWithIntrinsic(
                 cross_size,
                 if (direction == .row) item_style.min_height else item_style.min_width,
                 if (direction == .row) item_style.max_height else item_style.max_width,
                 cross_parent,
+                item_node.intrinsic_tiers,
+                dimension == .auto,
+                direction != .row,
             );
             result = @max(result, boundedAdd(cross_size, marginAcrossAxis(item_style.margin, direction)));
         }
@@ -980,8 +1074,24 @@ pub const LayoutTree = struct {
                     boundedSubtract(line_cross, cross_margin);
             }
         }
-        child_width = clampDimension(child_width, child_style.min_width, child_style.max_width, content_size.width);
-        child_height = clampDimension(child_height, child_style.min_height, child_style.max_height, content_size.height);
+        child_width = clampDimensionWithIntrinsic(
+            child_width,
+            child_style.min_width,
+            child_style.max_width,
+            content_size.width,
+            child_node.intrinsic_tiers,
+            child_style.width == .auto,
+            true,
+        );
+        child_height = clampDimensionWithIntrinsic(
+            child_height,
+            child_style.min_height,
+            child_style.max_height,
+            content_size.height,
+            child_node.intrinsic_tiers,
+            child_style.height == .auto,
+            false,
+        );
         const cross_size = if (direction == .row) child_height else child_width;
         const cross_offset = crossAxisOffset(
             child_align,
@@ -1045,6 +1155,7 @@ pub const LayoutTree = struct {
 
             const child_node = try self.nodeAt(child_id);
             child_node.intrinsic_measurement = null;
+            child_node.intrinsic_tiers = null;
             if (measure != null and child_node.children.items.len == 0 and
                 (child_style.width == .auto or child_style.height == .auto))
             {
@@ -1061,17 +1172,23 @@ pub const LayoutTree = struct {
                 if (child_style.width == .auto) child_size.width = measured.width;
                 if (child_style.height == .auto) child_size.height = measured.height;
             }
-            child_size.width = clampDimension(
+            child_size.width = clampDimensionWithIntrinsic(
                 child_size.width,
                 child_style.min_width,
                 child_style.max_width,
                 size.width,
+                child_node.intrinsic_tiers,
+                child_style.width == .auto,
+                true,
             );
-            child_size.height = clampDimension(
+            child_size.height = clampDimensionWithIntrinsic(
                 child_size.height,
                 child_style.min_height,
                 child_style.max_height,
                 size.height,
+                child_node.intrinsic_tiers,
+                child_style.height == .auto,
+                false,
             );
 
             const fractions = alignmentFractions(child_style.alignment);
@@ -1177,6 +1294,7 @@ pub const LayoutTree = struct {
             }
             const child_node = try self.nodeAt(child_id);
             child_node.intrinsic_measurement = null;
+            child_node.intrinsic_tiers = null;
             if (measure != null and child_node.children.items.len == 0 and
                 (child_style.width == .auto or child_style.height == .auto))
             {
@@ -1305,6 +1423,7 @@ pub const LayoutTree = struct {
         }
         const node_ref = try self.nodeAt(id);
         node_ref.intrinsic_measurement = null;
+        node_ref.intrinsic_tiers = null;
         if (measure != null and node_ref.children.items.len == 0 and
             (style_value.width == .auto or style_value.height == .auto))
         {
@@ -1376,6 +1495,24 @@ pub const LayoutTree = struct {
     }
 };
 
+const TierMeasureAdapter = struct {
+    tree: *LayoutTree,
+    measure: IntrinsicMeasureTiersFunction,
+    user_data: ?*anyopaque,
+};
+
+fn measureIntrinsicTiers(id: NodeId, available: Dimensions, user_data: ?*anyopaque) Dimensions {
+    const adapter: *TierMeasureAdapter = @ptrCast(@alignCast(user_data.?));
+    const tiers = adapter.measure(id, available, adapter.user_data);
+    if (validateIntrinsicDimensions(tiers)) |_| {
+        const node = adapter.tree.nodeAt(id) catch return .{ .width = std.math.nan(f32), .height = std.math.nan(f32) };
+        node.intrinsic_tiers = tiers;
+        return tiers.preferred;
+    } else |_| {
+        return .{ .width = std.math.nan(f32), .height = std.math.nan(f32) };
+    }
+}
+
 fn sameId(left: NodeId, right: NodeId) bool {
     return left.index == right.index and left.generation == right.generation;
 }
@@ -1446,18 +1583,20 @@ fn justifyGap(justify: JustifyContent, free: f32, count: usize) f32 {
     };
 }
 
-fn clampFlexMain(value: f32, style: Style, direction: FlexDirection, parent_main: f32) f32 {
+fn clampFlexMain(
+    value: f32,
+    style: Style,
+    direction: FlexDirection,
+    parent_main: f32,
+    intrinsic_tiers: ?IntrinsicDimensions,
+) f32 {
     const margin = marginAlongAxis(style.margin, direction);
     const box_value = boundedSubtract(value, margin);
     const clamped = if (direction == .row)
-        clampDimension(box_value, style.min_width, style.max_width, parent_main)
+        clampDimensionWithIntrinsic(box_value, style.min_width, style.max_width, parent_main, intrinsic_tiers, style.width == .auto, true)
     else
-        clampDimension(box_value, style.min_height, style.max_height, parent_main);
+        clampDimensionWithIntrinsic(box_value, style.min_height, style.max_height, parent_main, intrinsic_tiers, style.height == .auto, false);
     return boundedAdd(clamped, margin);
-}
-
-fn boundedSubtract(left: f32, right: f32) f32 {
-    return boundedCoordinate(left - right);
 }
 
 fn clampDimension(value: f32, min_dimension: Dimension, max_dimension: Dimension, parent: f32) f32 {
@@ -1467,6 +1606,27 @@ fn clampDimension(value: f32, min_dimension: Dimension, max_dimension: Dimension
     }
     if (min_dimension != .auto) {
         result = @max(result, boundedResolved(min_dimension, parent));
+    }
+    return result;
+}
+
+fn clampDimensionWithIntrinsic(
+    value: f32,
+    min_dimension: Dimension,
+    max_dimension: Dimension,
+    parent: f32,
+    intrinsic_tiers: ?IntrinsicDimensions,
+    use_intrinsic: bool,
+    horizontal: bool,
+) f32 {
+    var result = clampDimension(value, min_dimension, max_dimension, parent);
+    if (use_intrinsic) {
+        if (intrinsic_tiers) |tiers| {
+            const min_value = if (horizontal) tiers.min.width else tiers.min.height;
+            const max_value = if (horizontal) tiers.max.width else tiers.max.height;
+            result = @min(result, max_value);
+            result = @max(result, min_value);
+        }
     }
     return result;
 }
@@ -1592,6 +1752,17 @@ fn validateDimensions(value: Dimensions) Error!void {
     }
 }
 
+fn validateIntrinsicDimensions(value: IntrinsicDimensions) Error!void {
+    try validateDimensions(value.min);
+    try validateDimensions(value.preferred);
+    try validateDimensions(value.max);
+    if (value.min.width > value.preferred.width or value.preferred.width > value.max.width or
+        value.min.height > value.preferred.height or value.preferred.height > value.max.height)
+    {
+        return error.InvalidDimensions;
+    }
+}
+
 fn validateEdges(edges: Edges) Error!void {
     if (!finite(edges.top) or edges.top < 0 or
         !finite(edges.right) or edges.right < 0 or
@@ -1678,6 +1849,37 @@ fn measureInvalidIntrinsic(_: NodeId, _: Dimensions, _: ?*anyopaque) Dimensions 
     return .{ .width = std.math.nan(f32), .height = 10 };
 }
 
+const IntrinsicTierProbe = struct {
+    calls: usize = 0,
+    tiers: IntrinsicDimensions = .{
+        .min = .{ .width = 10, .height = 8 },
+        .preferred = .{ .width = 23, .height = 19 },
+        .max = .{ .width = 50, .height = 40 },
+    },
+};
+
+fn measureIntrinsicTiersForTest(_: NodeId, _: Dimensions, user_data: ?*anyopaque) IntrinsicDimensions {
+    const probe: *IntrinsicTierProbe = @ptrCast(@alignCast(user_data.?));
+    probe.calls += 1;
+    return probe.tiers;
+}
+
+fn measureInvalidIntrinsicTiers(_: NodeId, _: Dimensions, _: ?*anyopaque) IntrinsicDimensions {
+    return .{
+        .min = .{ .width = 30, .height = 0 },
+        .preferred = .{ .width = 20, .height = 10 },
+        .max = .{ .width = 40, .height = 20 },
+    };
+}
+
+fn measureNegativeIntrinsicTier(_: NodeId, _: Dimensions, _: ?*anyopaque) IntrinsicDimensions {
+    return .{
+        .min = .{ .width = -1, .height = 0 },
+        .preferred = .{ .width = 20, .height = 10 },
+        .max = .{ .width = 40, .height = 20 },
+    };
+}
+
 fn resolveDimension(dimension: Dimension, parent: f32, auto_value: f32) f32 {
     return switch (dimension) {
         .auto => auto_value,
@@ -1729,6 +1931,62 @@ fn boundedCoordinate(value: f32) f32 {
 
 fn boundedAdd(left: f32, right: f32) f32 {
     return boundedCoordinate(left + right);
+}
+
+fn boundedSubtract(left: f32, right: f32) f32 {
+    return boundedCoordinate(left - right);
+}
+
+test "intrinsic tier measurement uses preferred auto size" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 80 } });
+    const child = try tree.create(.{});
+    try tree.appendChild(root, child);
+
+    var probe = IntrinsicTierProbe{};
+    try tree.computeWithMeasureTiers(root, .{ .width = 100, .height = 80 }, measureIntrinsicTiersForTest, &probe);
+    try std.testing.expectEqual(@as(usize, 1), probe.calls);
+    try std.testing.expectEqual(Layout{ .width = 23, .height = 19 }, try tree.readLayout(child));
+}
+
+test "intrinsic tier measurement clamps flex size to min and max" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 80 } });
+    const child = try tree.create(.{ .flex_grow = 1, .flex_shrink = 1 });
+    try tree.appendChild(root, child);
+
+    var probe = IntrinsicTierProbe{
+        .tiers = .{
+            .min = .{ .width = 10, .height = 8 },
+            .preferred = .{ .width = 23, .height = 19 },
+            .max = .{ .width = 30, .height = 40 },
+        },
+    };
+    try tree.computeWithMeasureTiers(root, .{ .width = 100, .height = 80 }, measureIntrinsicTiersForTest, &probe);
+    try std.testing.expectEqual(Layout{ .width = 30, .height = 19 }, try tree.readLayout(child));
+
+    try tree.setStyle(root, .{ .width = .{ .length = 5 }, .height = .{ .length = 80 } });
+    probe.tiers.min.width = 10;
+    probe.tiers.preferred.width = 23;
+    probe.tiers.max.width = 50;
+    try tree.computeWithMeasureTiers(root, .{ .width = 5, .height = 80 }, measureIntrinsicTiersForTest, &probe);
+    try std.testing.expectEqual(@as(f32, 10), (try tree.readLayout(child)).width);
+}
+
+test "intrinsic tier measurement rejects invalid values and ordering" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 2 });
+    defer tree.deinit();
+    const leaf = try tree.create(.{});
+    try std.testing.expectError(
+        error.InvalidDimensions,
+        tree.computeWithMeasureTiers(leaf, .{ .width = 100, .height = 80 }, measureInvalidIntrinsicTiers, null),
+    );
+    try std.testing.expectError(
+        error.InvalidDimensions,
+        tree.computeWithMeasureTiers(leaf, .{ .width = 100, .height = 80 }, measureNegativeIntrinsicTier, null),
+    );
 }
 
 test "intrinsic measurement sizes auto leaf dimensions" {
