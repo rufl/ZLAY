@@ -6,6 +6,7 @@
 //! existing Clay-compatible transition helpers.
 
 const std = @import("std");
+const accessibility = @import("accessibility.zig");
 const types = @import("types.zig");
 const transition = @import("transition.zig");
 
@@ -266,6 +267,118 @@ pub const Timeline = struct {
         if (!std.math.isFinite(options.easing(0.0))) return error.InvalidEasing;
     }
 };
+/// Renderer-neutral bridge from a timeline's clock to visual transition data.
+///
+/// The timeline supplies lifecycle, delay, repeat, direction, and easing. The
+/// bridge supplies the immutable layout snapshots: `current` is the visual
+/// starting state and `target` is the layout target. Advancing this bridge
+/// never writes either snapshot or any layout configuration.
+pub const VisualStateBridge = struct {
+    timeline: *Timeline,
+    current: types.TransitionData,
+    target: types.TransitionData,
+    reduced_motion: accessibility.ReducedMotionPolicy = .full,
+    state: State = .idle,
+    value: types.TransitionData,
+
+    pub fn init(
+        timeline: *Timeline,
+        current: types.TransitionData,
+        target: types.TransitionData,
+        reduced_motion: accessibility.ReducedMotionPolicy,
+    ) VisualStateBridge {
+        return .{
+            .timeline = timeline,
+            .current = current,
+            .target = target,
+            .reduced_motion = reduced_motion,
+            .value = current,
+        };
+    }
+
+    pub fn start(self: *VisualStateBridge) Error!Sample {
+        if (self.state == .running or self.state == .completed or self.state == .cancelled) {
+            return error.InvalidState;
+        }
+
+        if (!self.reduced_motion.shouldAnimate()) {
+            self.state = .completed;
+            self.value = self.interpolate(1.0);
+            return self.settledSample();
+        }
+
+        const sample = try self.timeline.start();
+        self.state = sample.state;
+        self.value = self.interpolate(self.mixFor(sample));
+        var visual_sample = sample;
+        visual_sample.value = self.value;
+        return visual_sample;
+    }
+
+    pub fn advance(self: *VisualStateBridge, delta_seconds: f32) Error!Sample {
+        if (self.state == .idle) return error.InvalidState;
+        if (self.state == .completed or self.state == .cancelled) {
+            if (!self.reduced_motion.shouldAnimate()) return self.settledSample();
+            var terminal = try self.timeline.advance(delta_seconds);
+            terminal.value = self.value;
+            return terminal;
+        }
+
+        if (!self.reduced_motion.shouldAnimate()) return self.settledSample();
+
+        const sample = try self.timeline.advance(delta_seconds);
+        self.state = sample.state;
+        self.value = self.interpolate(self.mixFor(sample));
+        var visual_sample = sample;
+        visual_sample.value = self.value;
+        return visual_sample;
+    }
+
+    /// Stop at the current visual value. Cancellation never applies `target`.
+    pub fn cancel(self: *VisualStateBridge) void {
+        if (self.state == .running or self.state == .idle) {
+            self.timeline.cancel();
+            self.state = .cancelled;
+        }
+    }
+
+    pub fn reset(self: *VisualStateBridge) void {
+        self.timeline.reset();
+        self.state = .idle;
+        self.value = self.current;
+    }
+
+    pub fn visualValue(self: *const VisualStateBridge) types.TransitionData {
+        return self.value;
+    }
+
+    fn interpolate(self: *const VisualStateBridge, mix: f32) types.TransitionData {
+        return transition.interpolateProperties(
+            self.current,
+            self.current,
+            self.target,
+            self.timeline.config.properties,
+            mix,
+        );
+    }
+
+    fn mixFor(self: *const VisualStateBridge, sample: Sample) f32 {
+        const eased = self.timeline.config.easing(sample.progress);
+        return if (std.math.isFinite(eased)) eased else 0;
+    }
+
+    fn settledSample(self: *const VisualStateBridge) Sample {
+        return .{
+            .value = self.value,
+            .state = self.state,
+            .elapsed = self.timeline.totalDurationF32(),
+            .cycle = self.timeline.totalCycles() - 1,
+            .progress = 1,
+            .delayed = false,
+            .complete = self.state == .completed,
+        };
+    }
+};
 
 fn frame(time: f32, x: f32) Keyframe {
     return .{ .time = time, .value = .{ .bounding_box = .{ .x = x } } };
@@ -338,4 +451,79 @@ test "caller storage capacity and keyframe ordering are enforced" {
     var ordered = try Timeline.init(&larger, testConfig(1));
     try ordered.addKeyframe(frame(0.75, 1));
     try std.testing.expectError(error.InvalidKeyframeTime, ordered.addKeyframe(frame(0.5, 2)));
+}
+test "visual state bridge interpolates snapshots without changing targets" {
+    var storage: [2]Keyframe = undefined;
+    var timeline = try Timeline.init(&storage, .{ .duration = 1, .properties = .x });
+    try timeline.addKeyframe(frame(0, -100));
+    try timeline.addKeyframe(frame(1, 100));
+
+    const current: types.TransitionData = .{
+        .bounding_box = .{ .x = 10, .y = 3 },
+        .background_color = .{ .r = 0 },
+    };
+    const target: types.TransitionData = .{
+        .bounding_box = .{ .x = 30, .y = 9 },
+        .background_color = .{ .r = 1 },
+    };
+    var bridge = VisualStateBridge.init(&timeline, current, target, .full);
+    _ = try bridge.start();
+    const halfway = try bridge.advance(0.5);
+
+    try std.testing.expectApproxEqAbs(@as(f32, 20), halfway.value.bounding_box.x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 3), halfway.value.bounding_box.y, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 0), halfway.value.background_color.r, 0.001);
+    try std.testing.expectEqual(@as(f32, 30), target.bounding_box.x);
+    try std.testing.expectEqual(@as(f32, 9), target.bounding_box.y);
+    try std.testing.expectEqual(@as(f32, 1), target.background_color.r);
+}
+
+test "visual state bridge preserves intermediate value on cancel and settles completion" {
+    var storage: [2]Keyframe = undefined;
+    var timeline = try Timeline.init(&storage, testConfig(1));
+    try timeline.addKeyframe(frame(0, 0));
+    try timeline.addKeyframe(frame(1, 1));
+    var bridge = VisualStateBridge.init(
+        &timeline,
+        .{ .bounding_box = .{ .x = 0 } },
+        .{ .bounding_box = .{ .x = 100 } },
+        .full,
+    );
+
+    _ = try bridge.start();
+    _ = try bridge.advance(0.25);
+    bridge.cancel();
+    const cancelled = try bridge.advance(0);
+    try std.testing.expectEqual(State.cancelled, cancelled.state);
+    try std.testing.expectApproxEqAbs(@as(f32, 25), cancelled.value.bounding_box.x, 0.001);
+
+    bridge.reset();
+    _ = try bridge.start();
+    const completed = try bridge.advance(1);
+    try std.testing.expectEqual(State.completed, completed.state);
+    try std.testing.expect(completed.complete);
+    try std.testing.expectApproxEqAbs(@as(f32, 100), completed.value.bounding_box.x, 0.001);
+}
+
+test "visual state bridge reduced motion commits target without starting timeline" {
+    var storage: [2]Keyframe = undefined;
+    var timeline = try Timeline.init(&storage, testConfig(1));
+    try timeline.addKeyframe(frame(0, 0));
+    try timeline.addKeyframe(frame(1, 1));
+    const current: types.TransitionData = .{
+        .bounding_box = .{ .x = 2, .y = 4 },
+    };
+    const target: types.TransitionData = .{
+        .bounding_box = .{ .x = 20, .y = 40 },
+    };
+    var bridge = VisualStateBridge.init(&timeline, current, target, .reduced);
+
+    const settled = try bridge.start();
+    try std.testing.expectEqual(State.completed, settled.state);
+    try std.testing.expect(settled.complete);
+    try std.testing.expectApproxEqAbs(@as(f32, 20), settled.value.bounding_box.x, 0.001);
+    try std.testing.expectApproxEqAbs(@as(f32, 4), settled.value.bounding_box.y, 0.001);
+    try std.testing.expectEqual(State.idle, timeline.state);
+    try std.testing.expectEqual(@as(f32, 2), current.bounding_box.x);
+    try std.testing.expectEqual(@as(f32, 20), target.bounding_box.x);
 }
