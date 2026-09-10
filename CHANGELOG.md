@@ -9,10 +9,10 @@ All notable changes to ZLAY are recorded here. The format follows
 ### Added
 
 - Expanded the additive retained solver with content-hugging containers,
-  width-dependent intrinsic remeasurement, typed axis gaps, wrapped-line
-  alignment, reverse wrapping, flex auto margins, baseline alignment,
-  direction-aware grids, implicit tracks, row/column auto-flow, intrinsic
-  content-sizing keywords, and an external `RetainedStore` solver bridge.
+  direction-aware grids, implicit tracks, sparse/dense row/column auto-flow,
+  explicit and intrinsic grid-item sizing, logical cell alignment, grid auto
+  margins, intrinsic content-sizing keywords, and an external `RetainedStore`
+  solver bridge.
 
 ### Changed
 

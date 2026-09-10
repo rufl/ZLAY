@@ -1,12 +1,12 @@
 //! Small retained layout tree for renderer-agnostic UI foundations.
 //!
-//! This module intentionally implements only a bounded flex and grid subset:
-//! row and column containers, explicit fixed/auto/fractional grid tracks,
-//! `display: none`, absolute children, auto/length/percentage/stretch
-//! dimensions, and finite pixel padding/margins. There is no text-specific
-//! measurement, wrapping, block layout, or CSS parser. An optional caller-
-//! supplied intrinsic measurement callback can provide finite dimensions for
-//! auto-sized leaf nodes.
+//! This module intentionally implements a bounded flex and grid subset:
+//! row/column flex containers, explicit and implicit grid tracks, sparse/dense
+//! grid auto-placement, `display: none`, absolute children, intrinsic and
+//! explicit content sizing, finite typed gaps, padding, margins, and grid-cell
+//! alignment. There is no text-specific measurement, block layout, or CSS
+//! parser. An optional caller-supplied intrinsic measurement callback provides
+//! finite dimensions for content-sized leaf nodes.
 //! Layout is computed synchronously into caller-owned tree storage; no scratch
 //! allocation is needed by compute.
 
@@ -36,7 +36,8 @@ pub const Position = enum { relative, absolute };
 pub const FlexDirection = enum { row, column };
 pub const Direction = enum { ltr, rtl };
 pub const FlexWrap = enum { nowrap, wrap, wrap_reverse };
-pub const GridAutoFlow = enum { row, column };
+/// Sparse or hole-backfilling dense automatic placement by row or column.
+pub const GridAutoFlow = enum { row, column, row_dense, column_dense };
 pub const AlignItems = enum { stretch, flex_start, flex_end, center, baseline };
 pub const AlignSelf = enum { auto, stretch, flex_start, flex_end, center, baseline };
 /// A nine-position anchor used by overlay children.
@@ -73,6 +74,21 @@ fn alignmentFractions(alignment: Alignment) struct { x: f32, y: f32 } {
 fn alignmentHorizontalFraction(alignment: Alignment, direction: Direction) f32 {
     const fraction = alignmentFractions(alignment).x;
     return if (direction == .rtl) 1 - fraction else fraction;
+}
+
+fn gridFlowIsRow(flow: GridAutoFlow) bool {
+    return flow == .row or flow == .row_dense;
+}
+
+fn gridFlowIsDense(flow: GridAutoFlow) bool {
+    return flow == .row_dense or flow == .column_dense;
+}
+
+fn gridAxisOffset(free_space: f32, before_auto: bool, after_auto: bool, alignment: f32) f32 {
+    if (before_auto and after_auto) return free_space * 0.5;
+    if (before_auto) return free_space;
+    if (after_auto) return 0;
+    return free_space * alignment;
 }
 
 /// A renderer-neutral visible region for a laid out node and its descendants.
@@ -199,7 +215,8 @@ pub const Style = struct {
     flex_wrap: FlexWrap = .nowrap,
     align_items: AlignItems = .flex_start,
     align_self: AlignSelf = .auto,
-    /// Anchor used when this node is a relative child of an overlay parent.
+    /// Logical anchor used by relative children of overlay and grid parents.
+    /// Horizontal start/end positions follow the parent's text direction.
     alignment: Alignment = .top_left,
     justify_content: JustifyContent = .flex_start,
     align_content: AlignContent = .flex_start,
@@ -1707,6 +1724,7 @@ pub const LayoutTree = struct {
             const child_style = try self.style(child_id);
             if (child_style.display == .none or child_style.position == .absolute) continue;
             if ((try self.nodeConstAt(child_id)).grid_placement != null) continue;
+            if (gridFlowIsDense(style_value.grid_auto_flow)) auto_cursor = 0;
             var placement: ?GridPlacement = null;
             var search: usize = 0;
             while (placement == null) {
@@ -1745,7 +1763,7 @@ pub const LayoutTree = struct {
                     search += 1;
                 } else {
                     while (auto_cursor >= column_count * row_count) {
-                        if (style_value.grid_auto_flow == .row) {
+                        if (gridFlowIsRow(style_value.grid_auto_flow)) {
                             try appendImplicitTrack(
                                 &row_storage,
                                 &row_count,
@@ -1761,7 +1779,7 @@ pub const LayoutTree = struct {
                             );
                         }
                     }
-                    candidate = if (style_value.grid_auto_flow == .row)
+                    candidate = if (gridFlowIsRow(style_value.grid_auto_flow))
                         .{
                             .column = auto_cursor % column_count,
                             .row = auto_cursor / column_count,
@@ -1803,7 +1821,7 @@ pub const LayoutTree = struct {
                 continue;
             }
             const child_node = try self.nodeAt(child_id);
-            if (child_style.width == .auto or child_style.height == .auto) {
+            if (needsIntrinsicMeasurement(child_style.width) or needsIntrinsicMeasurement(child_style.height)) {
                 if (child_node.children.items.len != 0) {
                     child_node.intrinsic_measurement = try self.preferredNodeSize(
                         child_id,
@@ -1823,7 +1841,7 @@ pub const LayoutTree = struct {
             if (child_style.display == .none or child_style.position == .absolute) continue;
             const child_node = try self.nodeAt(child_id);
             const resolved_placement = child_node.grid_placement.?;
-            var child_width = try self.gridTrackSpanDimension(
+            const cell_width = try self.gridTrackSpanDimension(
                 columns,
                 resolved_placement.column,
                 resolved_placement.column_span,
@@ -1832,7 +1850,7 @@ pub const LayoutTree = struct {
                 children,
                 true,
             );
-            var child_height = try self.gridTrackSpanDimension(
+            const cell_height = try self.gridTrackSpanDimension(
                 rows,
                 resolved_placement.row,
                 resolved_placement.row_span,
@@ -1841,27 +1859,46 @@ pub const LayoutTree = struct {
                 children,
                 false,
             );
+            const margin_left = if (child_style.auto_margin.left) 0 else child_style.margin.left;
+            const margin_right = if (child_style.auto_margin.right) 0 else child_style.margin.right;
+            const margin_top = if (child_style.auto_margin.top) 0 else child_style.margin.top;
+            const margin_bottom = if (child_style.auto_margin.bottom) 0 else child_style.margin.bottom;
+            const available_width = boundedSubtract(cell_width, boundedAdd(margin_left, margin_right));
+            const available_height = boundedSubtract(cell_height, boundedAdd(margin_top, margin_bottom));
+            var child_width = resolveDimension(child_style.width, cell_width, available_width);
+            var child_height = resolveDimension(child_style.height, cell_height, available_height);
             if (child_node.intrinsic_measurement) |measured| {
-                if (child_style.width == .auto) child_width = measured.width;
-                if (child_style.height == .auto) child_height = measured.height;
-            } else {
-                child_width = boundedSubtract(child_width, horizontalEdges(child_style.margin));
-                child_height = boundedSubtract(child_height, verticalEdges(child_style.margin));
+                child_width = resolveContentDimension(
+                    child_style.width,
+                    cell_width,
+                    available_width,
+                    measured,
+                    child_node.intrinsic_tiers,
+                    true,
+                );
+                child_height = resolveContentDimension(
+                    child_style.height,
+                    cell_height,
+                    available_height,
+                    measured,
+                    child_node.intrinsic_tiers,
+                    false,
+                );
             }
             child_width = clampDimensionWithIntrinsic(
                 child_width,
                 child_style.min_width,
                 child_style.max_width,
-                size.width,
+                cell_width,
                 child_node.intrinsic_tiers,
-                child_style.width == .auto,
+                needsIntrinsicMeasurement(child_style.width),
                 true,
             );
             if (try self.remeasureLeafAtWidth(
                 child_id,
                 child_style,
                 child_width,
-                size,
+                .{ .width = cell_width, .height = cell_height },
                 measure,
                 measure_user_data,
             )) |remeasured| {
@@ -1871,9 +1908,9 @@ pub const LayoutTree = struct {
                 child_height,
                 child_style.min_height,
                 child_style.max_height,
-                size.height,
+                cell_height,
                 child_node.intrinsic_tiers,
-                child_style.height == .auto,
+                needsIntrinsicMeasurement(child_style.height),
                 false,
             );
             const column_offset = try self.gridTrackOffset(
@@ -1884,22 +1921,37 @@ pub const LayoutTree = struct {
                 children,
                 true,
             );
-            const child_x = if (style_value.direction == .rtl)
-                boundedAdd(
-                    origin.x,
-                    @max(
-                        boundedSubtract(
-                            boundedSubtract(size.width, column_offset),
-                            boundedAdd(child_width, child_style.margin.right),
-                        ),
-                        0,
-                    ),
-                )
+            const row_offset = try self.gridTrackOffset(
+                rows,
+                resolved_placement.row,
+                size.height,
+                row_gap,
+                children,
+                false,
+            );
+            const cell_x = if (style_value.direction == .rtl)
+                boundedAdd(origin.x, @max(boundedSubtract(boundedSubtract(size.width, column_offset), cell_width), 0))
             else
-                boundedAdd(boundedAdd(origin.x, column_offset), child_style.margin.left);
+                boundedAdd(origin.x, column_offset);
+            const alignment = alignmentFractions(child_style.alignment);
+            const horizontal_alignment = alignmentHorizontalFraction(child_style.alignment, style_value.direction);
+            const child_x = boundedAdd(
+                boundedAdd(cell_x, margin_left),
+                gridAxisOffset(
+                    boundedSubtract(available_width, child_width),
+                    child_style.auto_margin.left,
+                    child_style.auto_margin.right,
+                    horizontal_alignment,
+                ),
+            );
             const child_y = boundedAdd(
-                boundedAdd(origin.y, try self.gridTrackOffset(rows, resolved_placement.row, size.height, row_gap, children, false)),
-                child_style.margin.top,
+                boundedAdd(boundedAdd(origin.y, row_offset), margin_top),
+                gridAxisOffset(
+                    boundedSubtract(available_height, child_height),
+                    child_style.auto_margin.top,
+                    child_style.auto_margin.bottom,
+                    alignment.y,
+                ),
             );
             const preserved_measurement = child_node.intrinsic_measurement;
             try self.computeNode(
@@ -2998,7 +3050,7 @@ fn validateStyle(style: Style) Error!void {
     try validateGapSpec(style.min_flex_gap_spec);
     try validateGapSpec(style.max_flex_gap_spec);
     if (@intFromEnum(style.direction) >= 2 or
-        @intFromEnum(style.grid_auto_flow) >= 2 or
+        @intFromEnum(style.grid_auto_flow) >= 4 or
         @intFromEnum(style.flex_wrap) >= 3 or
         @intFromEnum(style.align_items) >= 5 or
         @intFromEnum(style.align_self) >= 6 or
@@ -3611,14 +3663,15 @@ test "rtl grid maps logical columns from the right edge" {
         .grid_rows = &rows,
     });
     const first = try tree.create(.{});
-    const second = try tree.create(.{});
+    const second = try tree.create(.{ .width = .{ .length = 10 }, .alignment = .top_left });
     try tree.appendChild(root, first);
     try tree.appendChild(root, second);
 
     try tree.compute(root, .{ .width = 50, .height = 10 });
     try std.testing.expectEqual(Layout{ .x = 30, .width = 20, .height = 10 }, try tree.readLayout(first));
-    try std.testing.expectEqual(Layout{ .width = 30, .height = 10 }, try tree.readLayout(second));
+    try std.testing.expectEqual(Layout{ .x = 20, .width = 10, .height = 10 }, try tree.readLayout(second));
 }
+
 test "grid auto flow grows implicit rows and columns" {
     const two_columns = [_]GridTrack{ GridTrack.fixedPx(20), GridTrack.fixedPx(20) };
     const one_row = [_]GridTrack{GridTrack.fixedPx(10)};
@@ -3660,6 +3713,91 @@ test "grid auto flow grows implicit rows and columns" {
     try tree.appendChild(column_root, column_third);
     try tree.compute(column_root, .{ .width = 50, .height = 20 });
     try std.testing.expectEqual(Layout{ .x = 20, .width = 30, .height = 10 }, try tree.readLayout(column_third));
+}
+
+test "dense grid flow backfills holes left by spanning items" {
+    const columns = [_]GridTrack{ GridTrack.fixedPx(10), GridTrack.fixedPx(10), GridTrack.fixedPx(10) };
+    const rows = [_]GridTrack{GridTrack.fixedPx(10)};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 10, .max_grid_tracks = 4 });
+    defer tree.deinit();
+
+    const sparse = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 30 },
+        .height = .{ .length = 20 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+        .grid_auto_rows = GridTrack.fixedPx(10),
+    });
+    const sparse_explicit = try tree.create(.{ .grid_column = 2, .grid_row = 1 });
+    const sparse_wide = try tree.create(.{ .grid_column_span = 2 });
+    const sparse_small = try tree.create(.{});
+    try tree.appendChild(sparse, sparse_explicit);
+    try tree.appendChild(sparse, sparse_wide);
+    try tree.appendChild(sparse, sparse_small);
+    try tree.compute(sparse, .{ .width = 30, .height = 20 });
+    try std.testing.expectEqual(Layout{ .x = 20, .y = 10, .width = 10, .height = 10 }, try tree.readLayout(sparse_small));
+
+    const dense = try tree.create(.{
+        .display = .grid,
+        .grid_auto_flow = .row_dense,
+        .width = .{ .length = 30 },
+        .height = .{ .length = 20 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+        .grid_auto_rows = GridTrack.fixedPx(10),
+    });
+    const dense_explicit = try tree.create(.{ .grid_column = 2, .grid_row = 1 });
+    const dense_wide = try tree.create(.{ .grid_column_span = 2 });
+    const dense_small = try tree.create(.{});
+    try tree.appendChild(dense, dense_explicit);
+    try tree.appendChild(dense, dense_wide);
+    try tree.appendChild(dense, dense_small);
+    try tree.compute(dense, .{ .width = 30, .height = 20 });
+    try std.testing.expectEqual(Layout{ .width = 10, .height = 10 }, try tree.readLayout(dense_small));
+}
+
+test "grid items honor explicit sizes alignment and auto margins" {
+    const columns = [_]GridTrack{ GridTrack.fixedPx(100), GridTrack.fixedPx(100) };
+    const rows = [_]GridTrack{ GridTrack.fixedPx(40), GridTrack.fixedPx(40) };
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 5 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 200 },
+        .height = .{ .length = 80 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+    });
+    const centered = try tree.create(.{
+        .grid_column = 1,
+        .grid_row = 1,
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .alignment = .center,
+    });
+    const percentage = try tree.create(.{
+        .grid_column = 2,
+        .grid_row = 1,
+        .width = .{ .percent = 0.5 },
+        .height = .{ .length = 20 },
+        .alignment = .bottom_right,
+    });
+    const pushed = try tree.create(.{
+        .grid_column = 1,
+        .grid_row = 2,
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .auto_margin = .{ .left = true },
+    });
+    try tree.appendChild(root, centered);
+    try tree.appendChild(root, percentage);
+    try tree.appendChild(root, pushed);
+
+    try tree.compute(root, .{ .width = 200, .height = 80 });
+    try std.testing.expectEqual(Layout{ .x = 40, .y = 15, .width = 20, .height = 10 }, try tree.readLayout(centered));
+    try std.testing.expectEqual(Layout{ .x = 150, .y = 20, .width = 50, .height = 20 }, try tree.readLayout(percentage));
+    try std.testing.expectEqual(Layout{ .x = 80, .y = 40, .width = 20, .height = 10 }, try tree.readLayout(pushed));
 }
 
 test "grid auto tracks use intrinsic child dimensions before fr space" {

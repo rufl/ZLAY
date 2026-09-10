@@ -577,10 +577,13 @@ clip rectangles.
 
 The grid subset supports fixed, intrinsic-auto, fractional, and bounded
 `GridTrack.minmax` tracks; shared or axis-specific typed gaps; explicit,
-partially specified, or automatic placement; row- or column-major auto flow;
-implicit tracks; and row/column spans. Track and tree limits are explicit:
-`max_supported_grid_tracks` bounds allocation-free grid scratch to 256 tracks
-per axis, while `max_supported_tree_depth` bounds layout descent to 256 levels.
+partially specified, sparse automatic, or dense automatic placement; row- or
+column-major auto flow; implicit tracks; and row/column spans. Grid items honor
+explicit, percentage, stretch, and intrinsic sizes within their cells; logical
+nine-position alignment and per-axis auto margins place remaining cell space.
+Track and tree limits are explicit: `max_supported_grid_tracks` bounds
+allocation-free grid scratch to 256 tracks per axis, while
+`max_supported_tree_depth` bounds layout descent to 256 levels.
 Hidden-tree and destruction traversal are iterative.
 
 `computeWithMeasure` supplies allocation-free intrinsic leaf measurement.
