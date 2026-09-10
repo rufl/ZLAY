@@ -563,20 +563,36 @@ settles directly to the target under reduced motion. Evaluation never allocates.
 
 ## Retained layout foundation
 
-`zlay.retained_layout.LayoutTree` is an additive Taffy-inspired retained tree.
-It supports generational node IDs, dirty propagation, row/column flex
-distribution, flex basis/grow/shrink, min/max dimensions, aspect ratios,
-`display: none`, absolute children with insets, and auto/length/percentage
-dimensions. `Overflow.clip` exposes bounded inherited clip rectangles.
-The bounded grid subset supports fixed and fractional tracks, gaps, explicit
-or automatic placement, and row/column spans. `computeWithMeasure` adds a
-caller-supplied allocation-free intrinsic measurement hook. Block flow, CSS
-parsing, and full browser layout semantics remain outside this API.
+`zlay.retained_layout.LayoutTree` is an additive, bounded retained tree for
+game and native UI. It supports generational node IDs, dirty propagation,
+row/column flex layout, wrapping, flex basis/grow/shrink, justification,
+cross-axis alignment, nine-position overlays, LTR/RTL row and overlay
+placement, min/max dimensions, aspect ratios, `display: none`, physical
+absolute insets, padding, margins, and auto/length/percentage/stretch
+dimensions. Typed flex gaps support fixed, percentage, and stretch units with
+optional bounds. `Overflow.clip` exposes inherited renderer-neutral clip
+rectangles.
 
-`zlay.retained_store` provides a caller-owned generational record store for
-ECS-style applications that keep layout data outside `LayoutTree`. It supplies
-bounded node records, flat child buckets, stale-ID detection, and explicit
-style/layout mutation. It is a storage adapter, not a second layout solver.
+The explicit grid subset supports fixed, intrinsic-auto, fractional, and
+bounded `GridTrack.minmax` tracks; shared or axis-specific pixel gaps; explicit
+or row-major automatic placement; and row/column spans. Track and tree limits
+are explicit: `max_supported_grid_tracks` bounds allocation-free grid scratch
+to 256 tracks per axis, while `max_supported_tree_depth` bounds recursive
+layout descent to 256 levels. Hidden-tree and destruction traversal are
+iterative.
+
+`computeWithMeasure` supplies allocation-free intrinsic leaf measurement.
+`computeWithMeasureTiers` adds minimum, preferred, and maximum intrinsic
+dimensions. `computeDirty` currently preserves correctness by recomputing the
+topmost attached subtree; it is not yet a partial-layout optimization.
+Block flow, CSS parsing, implicit grid tracks, and complete browser layout
+semantics remain outside this API.
+
+`zlay.retained_store` provides caller-owned generational records for ECS-style
+applications that keep layout data outside `LayoutTree`. It supplies bounded
+node records, flat child buckets, stale-ID detection, and explicit style/layout
+mutation. It is a storage adapter, not a second layout solver and not yet a
+direct external-store input to `LayoutTree`.
 
 ## Interaction foundation
 

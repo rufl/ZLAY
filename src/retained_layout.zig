@@ -16,6 +16,7 @@ pub const Error = error{
     NodeCapacityExceeded,
     ChildCapacityExceeded,
     GridTrackCapacityExceeded,
+    TreeDepthExceeded,
     StaleNodeId,
     ChildAlreadyAttached,
     ChildNotFound,
@@ -261,9 +262,16 @@ pub const Layout = struct {
     clip: ?ClipRect = null,
 };
 
+/// Hard ceiling for allocation-free grid track scratch.
+pub const max_supported_grid_tracks: usize = 256;
+/// Hard ceiling for recursive layout descent. Hidden-node and destruction
+/// traversals are iterative and do not consume call-stack depth.
+pub const max_supported_tree_depth: usize = 256;
+
 pub const Options = struct {
     max_nodes: usize = 256,
     max_children_per_node: usize = 64,
+    max_depth: usize = max_supported_tree_depth,
     max_grid_tracks: usize = 16,
 };
 const GridPlacement = struct {
@@ -489,9 +497,9 @@ pub const LayoutTree = struct {
     }
 
     fn destroyInternal(self: *LayoutTree, id: NodeId) Error!void {
-        const parent_id = (try self.nodeConstAt(id)).parent;
-        if (parent_id) |parent_id_value| {
-            const parent_node = try self.nodeAt(parent_id_value);
+        const outer_parent = (try self.nodeConstAt(id)).parent;
+        if (outer_parent) |parent_id| {
+            const parent_node = try self.nodeAt(parent_id);
             var index: ?usize = null;
             for (parent_node.children.items, 0..) |candidate, candidate_index| {
                 if (sameId(candidate, id)) {
@@ -500,25 +508,44 @@ pub const LayoutTree = struct {
                 }
             }
             _ = parent_node.children.orderedRemove(index orelse return error.ChildNotFound);
-            self.markDirty(parent_id_value);
+            self.markDirty(parent_id);
+            (try self.nodeAt(id)).parent = null;
         }
 
+        var current = id;
         while (true) {
             const child = blk: {
-                const node_ref = try self.nodeConstAt(id);
+                const node_ref = try self.nodeConstAt(current);
                 if (node_ref.children.items.len == 0) break :blk null;
                 break :blk node_ref.children.items[node_ref.children.items.len - 1];
             };
             if (child) |child_id| {
-                try self.destroyInternal(child_id);
-            } else break;
-        }
+                current = child_id;
+                continue;
+            }
 
-        const slot_ref = try self.slotAt(id);
-        if (slot_ref.node) |*node_entry| node_entry.children.deinit(self.allocator);
-        slot_ref.node = null;
-        slot_ref.generation = if (slot_ref.generation == std.math.maxInt(u32)) 1 else slot_ref.generation + 1;
-        self.live_count -= 1;
+            const parent_id = (try self.nodeConstAt(current)).parent;
+            if (parent_id) |parent_id_value| {
+                const parent_node = try self.nodeAt(parent_id_value);
+                var index: ?usize = null;
+                for (parent_node.children.items, 0..) |candidate, candidate_index| {
+                    if (sameId(candidate, current)) {
+                        index = candidate_index;
+                        break;
+                    }
+                }
+                _ = parent_node.children.orderedRemove(index orelse return error.ChildNotFound);
+            }
+
+            const finished = sameId(current, id);
+            const slot_ref = try self.slotAt(current);
+            if (slot_ref.node) |*node_entry| node_entry.children.deinit(self.allocator);
+            slot_ref.node = null;
+            slot_ref.generation = if (slot_ref.generation == std.math.maxInt(u32)) 1 else slot_ref.generation + 1;
+            self.live_count -= 1;
+            if (finished) break;
+            current = parent_id orelse return error.ChildNotFound;
+        }
     }
 
     fn computeNode(
@@ -532,6 +559,7 @@ pub const LayoutTree = struct {
         measure: ?IntrinsicMeasureFunction,
         measure_user_data: ?*anyopaque,
     ) Error!void {
+        try self.validateComputeDepth(id);
         const node_ref = try self.nodeAt(id);
         const style_value = node_ref.style;
         if (style_value.display == .none) {
@@ -1785,10 +1813,47 @@ pub const LayoutTree = struct {
     }
 
     fn hideNode(self: *LayoutTree, id: NodeId) Error!void {
-        const node_ref = try self.nodeAt(id);
-        node_ref.layout = .{};
-        node_ref.dirty = false;
-        for (node_ref.children.items) |child| try self.hideNode(child);
+        var current: ?NodeId = id;
+        while (current) |node_id| {
+            const node_ref = try self.nodeAt(node_id);
+            node_ref.layout = .{};
+            node_ref.dirty = false;
+            current = try self.nextPreorderNode(id, node_id);
+        }
+    }
+
+    fn nextPreorderNode(self: *const LayoutTree, root: NodeId, current: NodeId) Error!?NodeId {
+        const current_node = try self.nodeConstAt(current);
+        if (current_node.children.items.len != 0) return current_node.children.items[0];
+
+        var cursor = current;
+        while (!sameId(cursor, root)) {
+            const parent_id = (try self.nodeConstAt(cursor)).parent orelse return error.ChildNotFound;
+            const siblings = (try self.nodeConstAt(parent_id)).children.items;
+            var index: ?usize = null;
+            for (siblings, 0..) |sibling, sibling_index| {
+                if (sameId(sibling, cursor)) {
+                    index = sibling_index;
+                    break;
+                }
+            }
+            const sibling_index = index orelse return error.ChildNotFound;
+            if (sibling_index + 1 < siblings.len) return siblings[sibling_index + 1];
+            cursor = parent_id;
+        }
+        return null;
+    }
+
+    fn validateComputeDepth(self: *const LayoutTree, id: NodeId) Error!void {
+        const limit = @min(self.options.max_depth, max_supported_tree_depth);
+        var depth: usize = 1;
+        if (limit == 0) return error.TreeDepthExceeded;
+        var current = id;
+        while ((try self.nodeConstAt(current)).parent) |parent_id| {
+            if (depth >= limit) return error.TreeDepthExceeded;
+            depth += 1;
+            current = parent_id;
+        }
     }
 
     fn nodeAt(self: *LayoutTree, id: NodeId) Error!*Node {
@@ -2077,7 +2142,8 @@ fn gridPlacementsOverlap(left: GridPlacement, right: GridPlacement) bool {
 fn validateGridCapacity(style: Style, options: Options) Error!void {
     if (style.display != .grid) return;
     if (style.grid_columns.len == 0 or style.grid_rows.len == 0) return error.InvalidStyle;
-    if (style.grid_columns.len > options.max_grid_tracks or style.grid_rows.len > options.max_grid_tracks) {
+    const configured_limit = @min(options.max_grid_tracks, max_supported_grid_tracks);
+    if (style.grid_columns.len > configured_limit or style.grid_rows.len > configured_limit) {
         return error.GridTrackCapacityExceeded;
     }
 }
@@ -2524,6 +2590,33 @@ test "allocation failure and child capacity leave mutation unchanged" {
     try std.testing.expectError(error.NodeCapacityExceeded, tree.create(.{}));
     try std.testing.expectEqual(@as(usize, 3), tree.live_count);
 }
+
+test "deep retained trees fail layout safely and destroy iteratively" {
+    var tree = LayoutTree.init(std.testing.allocator, .{
+        .max_nodes = max_supported_tree_depth + 1,
+        .max_children_per_node = 1,
+        .max_depth = max_supported_tree_depth + 1,
+    });
+    defer tree.deinit();
+
+    var ids: [max_supported_tree_depth + 1]NodeId = undefined;
+    for (&ids) |*id| id.* = try tree.create(.{});
+    for (ids[0 .. ids.len - 1], ids[1..]) |parent_id, child_id| {
+        try tree.appendChild(parent_id, child_id);
+    }
+
+    try std.testing.expectError(
+        error.TreeDepthExceeded,
+        tree.compute(ids[0], .{ .width = 100, .height = 100 }),
+    );
+    try tree.setStyle(ids[0], .{ .display = .none });
+    try tree.compute(ids[0], .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(Layout{}, try tree.readLayout(ids[ids.len - 1]));
+
+    try tree.destroy(ids[0]);
+    try std.testing.expectError(error.StaleNodeId, tree.readLayout(ids[ids.len - 1]));
+    try std.testing.expectEqual(@as(usize, 0), tree.live_count);
+}
 test "grid fixed and fractional tracks place explicit and automatic children" {
     const columns = [_]GridTrack{ .{ .fixed = 30 }, .{ .fr = 1 } };
     const rows = [_]GridTrack{ .{ .fixed = 10 }, .{ .fr = 1 } };
@@ -2637,6 +2730,17 @@ test "grid rejects invalid tracks and bounded track capacity" {
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one }));
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one, .grid_rows = &[_]GridTrack{.{ .fr = 0 }} }));
     try std.testing.expectError(error.GridTrackCapacityExceeded, tree.create(.{ .display = .grid, .grid_columns = &two, .grid_rows = &one }));
+    const too_many = [_]GridTrack{.{ .fixed = 1 }} ** (max_supported_grid_tracks + 1);
+    var oversized_tree = LayoutTree.init(std.testing.allocator, .{
+        .max_nodes = 1,
+        .max_grid_tracks = max_supported_grid_tracks + 1,
+    });
+    defer oversized_tree.deinit();
+    try std.testing.expectError(error.GridTrackCapacityExceeded, oversized_tree.create(.{
+        .display = .grid,
+        .grid_columns = &too_many,
+        .grid_rows = &one,
+    }));
 }
 test "grid minmax clamps bounds and redistributes fractional space" {
     const bounded = try GridTrack.minmax(80, 100);
