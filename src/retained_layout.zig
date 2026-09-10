@@ -292,6 +292,8 @@ pub const Style = struct {
     flex_basis: Dimension = .auto,
     aspect_ratio: ?f32 = null,
     overflow: Overflow = .visible,
+    /// Caller-controlled content translation for clipped scroll containers.
+    scroll_offset: Point = .{},
     grid_columns: []const GridTrack = &.{},
     grid_rows: []const GridTrack = &.{},
     grid_column_gap: f32 = 0,
@@ -853,8 +855,8 @@ pub const LayoutTree = struct {
         if (children.len == 0) return;
 
         const content_origin = Point{
-            .x = boundedAdd(positioned_origin.x, style_value.padding.left),
-            .y = boundedAdd(positioned_origin.y, style_value.padding.top),
+            .x = boundedSubtract(boundedAdd(positioned_origin.x, style_value.padding.left), style_value.scroll_offset.x),
+            .y = boundedSubtract(boundedAdd(positioned_origin.y, style_value.padding.top), style_value.scroll_offset.y),
         };
         const content_size = Dimensions{
             .width = @max(size.width - horizontalEdges(style_value.padding), 0),
@@ -3489,6 +3491,11 @@ fn validateStyle(style: Style) Error!void {
     {
         return error.InvalidStyle;
     }
+    if (!finite(style.scroll_offset.x) or style.scroll_offset.x < 0 or
+        !finite(style.scroll_offset.y) or style.scroll_offset.y < 0)
+    {
+        return error.InvalidStyle;
+    }
     if (style.aspect_ratio) |ratio| {
         if (!finite(ratio) or ratio <= 0) return error.InvalidStyle;
     }
@@ -4177,6 +4184,26 @@ test "retained hit-test behavior filters self without hiding descendants" {
     try tree.appendChild(disabled, enabled);
     try tree.compute(root, .{ .width = 100, .height = 100 });
     try std.testing.expectEqual(enabled, (try tree.hitTest(root, .{ .x = 5, .y = 5 })).?);
+}
+
+test "retained scroll offset translates flow content within clip" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 3 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .overflow = .clip,
+        .scroll_offset = .{ .y = 20 },
+        .hit_test_behavior = .children_only,
+    });
+    const child = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 80 },
+    });
+    try tree.appendChild(root, child);
+    try tree.compute(root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(@as(f32, -20), (try tree.readLayout(child)).y);
+    try std.testing.expectEqual(child, (try tree.hitTest(root, .{ .x = 5, .y = 5 })).?);
+    try std.testing.expect((try tree.hitTest(root, .{ .x = 5, .y = 65 })) == null);
 }
 
 test "retained flex order preserves stable ties" {

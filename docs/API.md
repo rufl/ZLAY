@@ -576,8 +576,8 @@ fixed padding and margins with optional fixed/percentage `ResponsiveEdges`
 overrides; allocation-free clipped retained-node hit testing with explicit
 per-node priority and visual-order tie breaking; stable `order` sorting for
 retained children; configurable enabled, children-only, or disabled hit-test
-behavior; and auto/length/percentage/stretch/min-content/max-content/
-fit-content dimensions.
+behavior; caller-controlled scroll offsets for flow content; and
+auto/length/percentage/stretch/min-content/max-content/fit-content dimensions.
 Shared and axis-specific typed gaps support fixed values, including negative
 overlap, plus non-negative percentage and stretch units with optional bounds.
 `Overflow.clip` exposes inherited renderer-neutral clip rectangles.

@@ -30,6 +30,8 @@ All notable changes to ZLAY are recorded here. The format follows
   hit testing.
 - Added retained hit-test behavior modes for enabled, children-only, and
   disabled nodes.
+- Added caller-controlled retained scroll offsets for flow content inside
+  clipped containers.
 
 ### Changed
 
