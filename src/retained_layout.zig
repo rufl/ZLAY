@@ -33,6 +33,7 @@ pub const NodeId = struct {
 pub const Display = enum { flex, grid, none, overlay };
 pub const Position = enum { relative, absolute };
 pub const FlexDirection = enum { row, column };
+pub const Direction = enum { ltr, rtl };
 pub const FlexWrap = enum { nowrap, wrap };
 pub const AlignItems = enum { stretch, flex_start, flex_end, center };
 pub const AlignSelf = enum { auto, stretch, flex_start, flex_end, center };
@@ -64,6 +65,11 @@ fn alignmentFractions(alignment: Alignment) struct { x: f32, y: f32 } {
         .bottom_center => .{ .x = 0.5, .y = 1 },
         .bottom_right => .{ .x = 1, .y = 1 },
     };
+}
+
+fn alignmentHorizontalFraction(alignment: Alignment, direction: Direction) f32 {
+    const fraction = alignmentFractions(alignment).x;
+    return if (direction == .rtl) 1 - fraction else fraction;
 }
 
 /// A renderer-neutral visible region for a laid out node and its descendants.
@@ -162,6 +168,7 @@ pub const Style = struct {
     display: Display = .flex,
     position: Position = .relative,
     flex_direction: FlexDirection = .row,
+    direction: Direction = .ltr,
     flex_wrap: FlexWrap = .nowrap,
     align_items: AlignItems = .flex_start,
     align_self: AlignSelf = .auto,
@@ -805,7 +812,14 @@ pub const LayoutTree = struct {
             );
             const child_origin = if (style_value.flex_direction == .row)
                 Point{
-                    .x = boundedAdd(boundedAdd(content_origin.x, cursor), child_style.margin.left),
+                    .x = rowChildX(
+                        content_origin.x,
+                        content_size.width,
+                        cursor,
+                        child_width,
+                        child_style.margin,
+                        style_value.direction,
+                    ),
                     .y = boundedAdd(content_origin.y, cross_offset),
                 }
             else
@@ -920,6 +934,7 @@ pub const LayoutTree = struct {
                     content_size,
                     inherited_clip,
                     direction,
+                    style_value.direction,
                     cross_cursor,
                     line_cross,
                     cursor,
@@ -1101,6 +1116,7 @@ pub const LayoutTree = struct {
         content_size: Dimensions,
         inherited_clip: ?ClipRect,
         direction: FlexDirection,
+        layout_direction: Direction,
         cross_cursor: f32,
         line_cross: f32,
         cursor: f32,
@@ -1164,7 +1180,14 @@ pub const LayoutTree = struct {
         );
         const child_origin = if (direction == .row)
             Point{
-                .x = boundedAdd(boundedAdd(content_origin.x, cursor), child_style.margin.left),
+                .x = rowChildX(
+                    content_origin.x,
+                    content_size.width,
+                    cursor,
+                    child_width,
+                    child_style.margin,
+                    layout_direction,
+                ),
                 .y = boundedAdd(boundedAdd(content_origin.y, cross_cursor), cross_offset),
             }
         else
@@ -1193,7 +1216,9 @@ pub const LayoutTree = struct {
         measure: ?IntrinsicMeasureFunction,
         measure_user_data: ?*anyopaque,
     ) Error!void {
+        const node_style = (try self.nodeConstAt(id)).style;
         const children = (try self.nodeConstAt(id)).children.items;
+        const direction = node_style.direction;
         for (children) |child_id| {
             const child_style = try self.style(child_id);
             if (child_style.display == .none) {
@@ -1254,6 +1279,7 @@ pub const LayoutTree = struct {
             );
 
             const fractions = alignmentFractions(child_style.alignment);
+            const horizontal_fraction = alignmentHorizontalFraction(child_style.alignment, direction);
             const horizontal_margin = horizontalEdges(child_style.margin);
             const vertical_margin = verticalEdges(child_style.margin);
             const free_width = @max(
@@ -1267,7 +1293,7 @@ pub const LayoutTree = struct {
             const child_origin = Point{
                 .x = boundedAdd(
                     origin.x,
-                    boundedAdd(child_style.margin.left, free_width * fractions.x),
+                    boundedAdd(child_style.margin.left, free_width * horizontal_fraction),
                 ),
                 .y = boundedAdd(
                     origin.y,
@@ -1735,7 +1761,6 @@ fn sameId(left: NodeId, right: NodeId) bool {
 fn horizontalEdges(edges: Edges) f32 {
     return boundedAdd(edges.left, edges.right);
 }
-
 fn verticalEdges(edges: Edges) f32 {
     return boundedAdd(edges.top, edges.bottom);
 }
@@ -1755,6 +1780,26 @@ fn resolveAlign(value: AlignSelf, parent: AlignItems) AlignItems {
         .flex_end => .flex_end,
         .center => .center,
     };
+}
+
+fn rowChildX(
+    origin_x: f32,
+    content_width: f32,
+    cursor: f32,
+    child_width: f32,
+    margin: Edges,
+    direction: Direction,
+) f32 {
+    if (direction == .rtl) {
+        return boundedAdd(
+            origin_x,
+            boundedSubtract(
+                boundedSubtract(content_width, cursor),
+                boundedAdd(child_width, margin.right),
+            ),
+        );
+    }
+    return boundedAdd(origin_x, boundedAdd(cursor, margin.left));
 }
 
 fn crossAxisOffset(
@@ -1997,7 +2042,8 @@ fn validateStyle(style: Style) Error!void {
     try validateGapSpec(style.flex_gap_spec);
     try validateGapSpec(style.min_flex_gap_spec);
     try validateGapSpec(style.max_flex_gap_spec);
-    if (@intFromEnum(style.flex_wrap) >= 2 or
+    if (@intFromEnum(style.direction) >= 2 or
+        @intFromEnum(style.flex_wrap) >= 2 or
         @intFromEnum(style.align_items) >= 4 or
         @intFromEnum(style.align_self) >= 5 or
         @intFromEnum(style.alignment) >= 9 or
@@ -2325,6 +2371,33 @@ test "row and column flex layout resolve basic sizes" {
     try tree.appendChild(column, item);
     try tree.compute(column, .{ .width = 40, .height = 100 });
     try std.testing.expectEqual(Layout{ .width = 10, .height = 25 }, try tree.readLayout(item));
+}
+
+test "rtl row direction mirrors child placement while absolute insets stay physical" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .direction = .rtl,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+    });
+    const first = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    const second = try tree.create(.{ .width = .{ .length = 20 }, .height = .{ .length = 10 } });
+    const absolute = try tree.create(.{
+        .position = .absolute,
+        .width = .{ .length = 10 },
+        .height = .{ .length = 10 },
+        .left = .{ .length = 7 },
+        .right = .{ .length = 13 },
+        .top = .{ .length = 2 },
+    });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.appendChild(root, absolute);
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(Layout{ .x = 70, .width = 30, .height = 10 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .x = 50, .width = 20, .height = 10 }, try tree.readLayout(second));
+    try std.testing.expectEqual(Layout{ .x = 7, .y = 2, .width = 10, .height = 10 }, try tree.readLayout(absolute));
 }
 
 test "none and absolute children have deterministic boxes" {
@@ -2720,6 +2793,40 @@ test "overlay aligns relative children independently within padded content" {
         Layout{ .x = 13, .y = 9, .width = 7, .height = 9 },
         try tree.readLayout(absolute),
     );
+}
+
+test "rtl overlay alignment mirrors horizontal anchors within padded content" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .overlay,
+        .direction = .rtl,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 80 },
+        .padding = .{ .left = 10, .right = 20 },
+    });
+    const start = try tree.create(.{
+        .alignment = .top_left,
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+    });
+    const end = try tree.create(.{
+        .alignment = .top_right,
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+    });
+    const centered = try tree.create(.{
+        .alignment = .center,
+        .width = .{ .length = 10 },
+        .height = .{ .length = 10 },
+    });
+    try tree.appendChild(root, start);
+    try tree.appendChild(root, end);
+    try tree.appendChild(root, centered);
+    try tree.compute(root, .{ .width = 100, .height = 80 });
+    try std.testing.expectEqual(Layout{ .x = 60, .width = 20, .height = 10 }, try tree.readLayout(start));
+    try std.testing.expectEqual(Layout{ .x = 10, .width = 20, .height = 10 }, try tree.readLayout(end));
+    try std.testing.expectEqual(Layout{ .x = 40, .y = 35, .width = 10, .height = 10 }, try tree.readLayout(centered));
 }
 
 test "flex margins contribute spacing without changing child boxes" {
