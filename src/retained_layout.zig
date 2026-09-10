@@ -29,13 +29,40 @@ pub const NodeId = struct {
     pub const invalid: NodeId = .{ .index = std.math.maxInt(u32), .generation = 0 };
 };
 
-pub const Display = enum { flex, grid, none };
+pub const Display = enum { flex, grid, none, overlay };
 pub const Position = enum { relative, absolute };
 pub const FlexDirection = enum { row, column };
 pub const AlignItems = enum { stretch, flex_start, flex_end, center };
 pub const AlignSelf = enum { auto, stretch, flex_start, flex_end, center };
+/// A nine-position anchor used by overlay children.
+pub const Alignment = enum {
+    top_left,
+    top_center,
+    top_right,
+    left,
+    center,
+    right,
+    bottom_left,
+    bottom_center,
+    bottom_right,
+};
 pub const JustifyContent = enum { flex_start, flex_end, center, space_between, space_around, space_evenly };
 pub const Overflow = enum { visible, clip };
+
+/// Horizontal and vertical fractions for an overlay anchor.
+fn alignmentFractions(alignment: Alignment) struct { x: f32, y: f32 } {
+    return switch (alignment) {
+        .top_left => .{ .x = 0, .y = 0 },
+        .top_center => .{ .x = 0.5, .y = 0 },
+        .top_right => .{ .x = 1, .y = 0 },
+        .left => .{ .x = 0, .y = 0.5 },
+        .center => .{ .x = 0.5, .y = 0.5 },
+        .right => .{ .x = 1, .y = 0.5 },
+        .bottom_left => .{ .x = 0, .y = 1 },
+        .bottom_center => .{ .x = 0.5, .y = 1 },
+        .bottom_right => .{ .x = 1, .y = 1 },
+    };
+}
 
 /// A renderer-neutral visible region for a laid out node and its descendants.
 /// A null clip means no ancestor or node requested clipping.
@@ -72,8 +99,6 @@ pub const GridTrack = union(enum) {
         return .{ .fr = value };
     }
 };
-pub const GridTrackSize = GridTrack;
-
 pub const Dimension = union(enum) {
     auto,
     length: f32,
@@ -87,7 +112,6 @@ pub const Dimension = union(enum) {
         return .{ .percent = value };
     }
 };
-
 /// Four-sided spacing around a node. Values are finite, non-negative pixels.
 pub const Edges = struct {
     top: f32 = 0,
@@ -106,6 +130,8 @@ pub const Style = struct {
     flex_direction: FlexDirection = .row,
     align_items: AlignItems = .flex_start,
     align_self: AlignSelf = .auto,
+    /// Anchor used when this node is a relative child of an overlay parent.
+    alignment: Alignment = .top_left,
     justify_content: JustifyContent = .flex_start,
     width: Dimension = .auto,
     height: Dimension = .auto,
@@ -456,6 +482,10 @@ pub const LayoutTree = struct {
             try self.computeGrid(id, content_origin, content_size, effective_clip, measure, measure_user_data);
             return;
         }
+        if (style_value.display == .overlay) {
+            try self.computeOverlay(id, content_origin, content_size, effective_clip, measure, measure_user_data);
+            return;
+        }
 
         const available_main = if (style_value.flex_direction == .row) content_size.width else content_size.height;
         for (children) |child_id| {
@@ -636,6 +666,101 @@ pub const LayoutTree = struct {
                 if (style_value.flex_direction == .row) child_layout.width else child_layout.height,
                 boundedAdd(main_margin, justify_gap),
             ));
+        }
+    }
+    fn computeOverlay(
+        self: *LayoutTree,
+        id: NodeId,
+        origin: Point,
+        size: Dimensions,
+        inherited_clip: ?ClipRect,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
+    ) Error!void {
+        const children = (try self.nodeConstAt(id)).children.items;
+        for (children) |child_id| {
+            const child_style = try self.style(child_id);
+            if (child_style.display == .none) {
+                try self.hideNode(child_id);
+                continue;
+            }
+            if (child_style.position == .absolute) {
+                // Overlay only changes relative-child placement. Keep absolute
+                // offsets relative to the same padded content box as flex.
+                try self.computeAbsolute(
+                    child_id,
+                    child_style,
+                    size,
+                    origin,
+                    inherited_clip,
+                    measure,
+                    measure_user_data,
+                );
+                continue;
+            }
+
+            const child_node = try self.nodeAt(child_id);
+            child_node.intrinsic_measurement = null;
+            if (measure != null and child_node.children.items.len == 0 and
+                (child_style.width == .auto or child_style.height == .auto))
+            {
+                const measured = measure.?(child_id, size, measure_user_data);
+                try validateDimensions(measured);
+                child_node.intrinsic_measurement = measured;
+            }
+
+            var child_size = Dimensions{
+                .width = resolveDimension(child_style.width, size.width, 0),
+                .height = resolveDimension(child_style.height, size.height, 0),
+            };
+            if (child_node.intrinsic_measurement) |measured| {
+                if (child_style.width == .auto) child_size.width = measured.width;
+                if (child_style.height == .auto) child_size.height = measured.height;
+            }
+            child_size.width = clampDimension(
+                child_size.width,
+                child_style.min_width,
+                child_style.max_width,
+                size.width,
+            );
+            child_size.height = clampDimension(
+                child_size.height,
+                child_style.min_height,
+                child_style.max_height,
+                size.height,
+            );
+
+            const fractions = alignmentFractions(child_style.alignment);
+            const horizontal_margin = horizontalEdges(child_style.margin);
+            const vertical_margin = verticalEdges(child_style.margin);
+            const free_width = @max(
+                boundedSubtract(size.width, boundedAdd(child_size.width, horizontal_margin)),
+                0,
+            );
+            const free_height = @max(
+                boundedSubtract(size.height, boundedAdd(child_size.height, vertical_margin)),
+                0,
+            );
+            const child_origin = Point{
+                .x = boundedAdd(
+                    origin.x,
+                    boundedAdd(child_style.margin.left, free_width * fractions.x),
+                ),
+                .y = boundedAdd(
+                    origin.y,
+                    boundedAdd(child_style.margin.top, free_height * fractions.y),
+                ),
+            };
+            try self.computeNode(
+                child_id,
+                child_origin,
+                size,
+                child_size,
+                false,
+                inherited_clip,
+                measure,
+                measure_user_data,
+            );
         }
     }
 
@@ -1094,6 +1219,7 @@ fn validateStyle(style: Style) Error!void {
     try validateEdges(style.margin);
     if (@intFromEnum(style.align_items) >= 4 or
         @intFromEnum(style.align_self) >= 5 or
+        @intFromEnum(style.alignment) >= 9 or
         @intFromEnum(style.justify_content) >= 6)
     {
         return error.InvalidStyle;
@@ -1547,6 +1673,61 @@ test "padding offsets flex children and reduces available content" {
     try std.testing.expectEqual(
         Layout{ .x = 7, .y = 5, .width = 80, .height = 20 },
         try tree.readLayout(child),
+    );
+}
+
+test "overlay aligns relative children independently within padded content" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .overlay,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 80 },
+        .padding = .{ .left = 10, .right = 20, .top = 5, .bottom = 15 },
+    });
+    const centered = try tree.create(.{
+        .alignment = .center,
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+    });
+    const overlap = try tree.create(.{
+        .alignment = .center,
+        .width = .{ .length = 8 },
+        .height = .{ .length = 6 },
+    });
+    const corner = try tree.create(.{
+        .alignment = .top_right,
+        .width = .{ .length = 15 },
+        .height = .{ .length = 12 },
+    });
+    const absolute = try tree.create(.{
+        .position = .absolute,
+        .width = .{ .length = 7 },
+        .height = .{ .length = 9 },
+        .left = .{ .length = 3 },
+        .top = .{ .length = 4 },
+    });
+    try tree.appendChild(root, centered);
+    try tree.appendChild(root, overlap);
+    try tree.appendChild(root, corner);
+    try tree.appendChild(root, absolute);
+    try tree.compute(root, .{ .width = 100, .height = 80 });
+
+    try std.testing.expectEqual(
+        Layout{ .x = 35, .y = 30, .width = 20, .height = 10 },
+        try tree.readLayout(centered),
+    );
+    try std.testing.expectEqual(
+        Layout{ .x = 41, .y = 32, .width = 8, .height = 6 },
+        try tree.readLayout(overlap),
+    );
+    try std.testing.expectEqual(
+        Layout{ .x = 65, .y = 5, .width = 15, .height = 12 },
+        try tree.readLayout(corner),
+    );
+    try std.testing.expectEqual(
+        Layout{ .x = 13, .y = 9, .width = 7, .height = 9 },
+        try tree.readLayout(absolute),
     );
 }
 
