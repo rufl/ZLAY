@@ -941,21 +941,23 @@ fn crossAxisOffset(
 
 fn justifyLeading(justify: JustifyContent, free: f32, count: usize) f32 {
     if (count == 0) return 0;
+    const count_float = @as(f32, @floatFromInt(count));
     return switch (justify) {
         .flex_start, .space_between => 0,
         .flex_end => free,
         .center => free / 2,
-        .space_around => free / @as(f32, @floatFromInt(count * 2)),
-        .space_evenly => free / @as(f32, @floatFromInt(count + 1)),
+        .space_around => free / count_float / 2,
+        .space_evenly => free / (count_float + 1),
     };
 }
 
 fn justifyGap(justify: JustifyContent, free: f32, count: usize) f32 {
     if (count < 2 and justify == .space_between) return 0;
+    const count_float = @as(f32, @floatFromInt(count));
     return switch (justify) {
         .space_between => free / @as(f32, @floatFromInt(count - 1)),
-        .space_around => free / @as(f32, @floatFromInt(count)),
-        .space_evenly => free / @as(f32, @floatFromInt(count + 1)),
+        .space_around => free / count_float,
+        .space_evenly => free / (count_float + 1),
         .flex_start, .flex_end, .center => 0,
     };
 }
