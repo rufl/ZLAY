@@ -251,6 +251,10 @@ pub const Tabs = struct {
     }
 };
 
+/// Single-selection registration-order state for radio controls.
+/// The API mirrors `Tabs` because both widgets share selection semantics.
+pub const RadioGroup = Tabs;
+
 /// Bounded list selection state. The list values are IDs supplied by the
 /// caller, so selection can be handed directly to interaction/layout code.
 pub const ListState = struct {
@@ -441,6 +445,16 @@ test "tabs select and move with wrap and clamp" {
     try std.testing.expectError(error.InvalidIndex, tabs.select(2));
     try std.testing.expect(try tabs.handleKey(.end, .clamp));
     try std.testing.expectEqual(@as(usize, 1), tabs.selectedIndex().?);
+}
+
+test "radio group preserves single selection semantics" {
+    var storage: [2]ElementId = undefined;
+    var radios = RadioGroup.init(&storage);
+    try radios.append(.{ .id = 11 });
+    try radios.append(.{ .id = 22 });
+    try radios.select(1);
+    try std.testing.expectEqual(@as(u32, 22), radios.selectedId().?.id);
+    try std.testing.expectEqual(@as(usize, 0), try radios.movePrevious(.clamp));
 }
 
 test "list keyboard movement and empty errors are deterministic" {

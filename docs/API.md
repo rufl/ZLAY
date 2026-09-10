@@ -636,12 +636,12 @@ capture owned by it.
 ## Widget state primitives
 
 `zlay.widgets` provides renderer-neutral, caller-storage-backed state for
-buttons, checkboxes, tabs, keyboard-navigable lists, and modal dialogs. Buttons
-and checkboxes expose explicit keyboard/pointer activation; tabs and lists
-preserve registration order with wrapping or clamped movement; dialogs provide
-open, close, toggle, and Escape handling. These types contain interaction state
-only; layout, drawing, platform input, and accessibility semantics remain
-application-owned.
+buttons, checkboxes, radio groups, tabs, keyboard-navigable lists, and modal
+dialogs. Buttons and checkboxes expose explicit keyboard/pointer activation;
+radio groups and tabs preserve single-selection and registration-order
+semantics with wrapping or clamped movement; dialogs provide open, close,
+toggle, and Escape handling. These types contain interaction state only; layout,
+drawing, platform input, and accessibility semantics remain application-owned.
 
 ## Text widgets and virtualization
 
