@@ -1,17 +1,18 @@
 //! Small retained layout tree for renderer-agnostic UI foundations.
 //!
-//! This module intentionally implements only a bounded flex subset: row and
-//! column containers, `display: none`, absolute children, and auto/length/
-//! percentage dimensions. There is no text measurement, wrapping, padding,
-//! margin, grid, block layout, or CSS parser. Layout is computed synchronously
-//! into caller-owned tree storage; no scratch allocation is needed by compute.
+//! This module intentionally implements only a bounded flex and grid subset:
+//! row and column containers, explicit fixed/fractional grid tracks,
+//! `display: none`, absolute children, and auto/length/percentage dimensions.
+//! There is no text measurement, wrapping, padding, margin, block layout, or
+//! CSS parser. Layout is computed synchronously into caller-owned tree storage;
+//! no scratch allocation is needed by compute.
 
 const std = @import("std");
-
 pub const Error = error{
     OutOfMemory,
     NodeCapacityExceeded,
     ChildCapacityExceeded,
+    GridTrackCapacityExceeded,
     StaleNodeId,
     ChildAlreadyAttached,
     ChildNotFound,
@@ -26,9 +27,26 @@ pub const NodeId = struct {
     pub const invalid: NodeId = .{ .index = std.math.maxInt(u32), .generation = 0 };
 };
 
-pub const Display = enum { flex, none };
+pub const Display = enum { flex, grid, none };
 pub const Position = enum { relative, absolute };
 pub const FlexDirection = enum { row, column };
+
+/// One explicit grid track. `fixed` is pixels; `fr` receives a share of the
+/// space left after fixed tracks and gaps.
+pub const GridTrack = union(enum) {
+    fixed: f32,
+    fr: f32,
+
+    pub fn fixedPx(value: f32) GridTrack {
+        return .{ .fixed = value };
+    }
+
+    pub fn fractional(value: f32) GridTrack {
+        return .{ .fr = value };
+    }
+};
+
+pub const GridTrackSize = GridTrack;
 
 pub const Dimension = union(enum) {
     auto,
@@ -55,6 +73,14 @@ pub const Style = struct {
     top: Dimension = .auto,
     bottom: Dimension = .auto,
     flex_grow: f32 = 0,
+    grid_columns: []const GridTrack = &.{},
+    grid_rows: []const GridTrack = &.{},
+    grid_column_gap: f32 = 0,
+    grid_row_gap: f32 = 0,
+    grid_gap: f32 = 0,
+    /// One-based explicit placement. Zero means auto-placement.
+    grid_column: usize = 0,
+    grid_row: usize = 0,
 };
 
 pub const Dimensions = struct {
@@ -77,6 +103,11 @@ pub const Layout = struct {
 pub const Options = struct {
     max_nodes: usize = 256,
     max_children_per_node: usize = 64,
+    max_grid_tracks: usize = 16,
+};
+const GridPlacement = struct {
+    column: usize,
+    row: usize,
 };
 
 const Node = struct {
@@ -84,6 +115,7 @@ const Node = struct {
     parent: ?NodeId = null,
     children: std.ArrayList(NodeId) = .empty,
     layout: Layout = .{},
+    grid_placement: ?GridPlacement = null,
     dirty: bool = true,
 };
 
@@ -112,6 +144,7 @@ pub const LayoutTree = struct {
 
     pub fn create(self: *LayoutTree, style_value: Style) Error!NodeId {
         try validateStyle(style_value);
+        try validateGridCapacity(style_value, self.options);
         var slot_index: usize = 0;
         while (slot_index < self.slots.items.len) : (slot_index += 1) {
             if (self.slots.items[slot_index].node == null) break;
@@ -137,6 +170,7 @@ pub const LayoutTree = struct {
 
     pub fn setStyle(self: *LayoutTree, id: NodeId, new_style: Style) Error!void {
         try validateStyle(new_style);
+        try validateGridCapacity(new_style, self.options);
         const node_ref = try self.nodeAt(id);
         node_ref.style = new_style;
         self.markDirty(id);
@@ -271,7 +305,7 @@ pub const LayoutTree = struct {
         const node_ref = try self.nodeAt(id);
         const style_value = node_ref.style;
         if (style_value.display == .none) {
-            self.hideNode(id) catch |err| return err;
+            try self.hideNode(id);
             return;
         }
 
@@ -283,6 +317,11 @@ pub const LayoutTree = struct {
         node_ref.dirty = false;
         const children = node_ref.children.items;
         if (children.len == 0) return;
+
+        if (style_value.display == .grid) {
+            try self.computeGrid(id, origin, size);
+            return;
+        }
 
         var fixed_main: f32 = 0;
         var total_grow: f32 = 0;
@@ -303,7 +342,7 @@ pub const LayoutTree = struct {
                 continue;
             }
             if (child_style.position == .absolute) {
-                try self.computeAbsolute(child_id, child_style, size);
+                try self.computeAbsolute(child_id, child_style, size, origin);
                 continue;
             }
 
@@ -329,7 +368,104 @@ pub const LayoutTree = struct {
         }
     }
 
-    fn computeAbsolute(self: *LayoutTree, id: NodeId, style_value: Style, containing: Dimensions) Error!void {
+    fn computeGrid(self: *LayoutTree, id: NodeId, origin: Point, size: Dimensions) Error!void {
+        const node_ref = try self.nodeAt(id);
+        const style_value = node_ref.style;
+        const columns = style_value.grid_columns;
+        const rows = style_value.grid_rows;
+        const column_gap = effectiveGap(style_value.grid_column_gap, style_value.grid_gap);
+        const row_gap = effectiveGap(style_value.grid_row_gap, style_value.grid_gap);
+        const children = node_ref.children.items;
+
+        for (children) |child_id| {
+            (try self.nodeAt(child_id)).grid_placement = null;
+        }
+        // Validate explicit placements before auto-placement so an automatic
+        // item cannot consume a cell reserved by a later explicit item.
+        for (children, 0..) |child_id, index| {
+            const child_style = try self.style(child_id);
+            if (child_style.display == .none or child_style.position == .absolute) continue;
+            const has_column = child_style.grid_column != 0;
+            const has_row = child_style.grid_row != 0;
+            if (has_column != has_row or (has_column and
+                (child_style.grid_column > columns.len or child_style.grid_row > rows.len)))
+            {
+                return error.InvalidStyle;
+            }
+            if (has_column) {
+                for (children[0..index]) |previous_id| {
+                    const previous = try self.style(previous_id);
+                    if (previous.display == .none or previous.position == .absolute) continue;
+                    if (previous.grid_column == child_style.grid_column and previous.grid_row == child_style.grid_row) {
+                        return error.InvalidStyle;
+                    }
+                }
+            }
+        }
+
+        var auto_cursor: usize = 0;
+        const cell_count = columns.len * rows.len;
+        for (children) |child_id| {
+            const child_style = try self.style(child_id);
+            if (child_style.display == .none) {
+                try self.hideNode(child_id);
+                continue;
+            }
+            if (child_style.position == .absolute) {
+                try self.computeAbsolute(child_id, child_style, size, origin);
+                continue;
+            }
+            var placement: GridPlacement = undefined;
+            if (child_style.grid_column != 0) {
+                placement = .{ .column = child_style.grid_column - 1, .row = child_style.grid_row - 1 };
+            } else {
+                while (auto_cursor < cell_count) {
+                    if (!(try self.gridCellOccupied(children, auto_cursor, columns.len))) break;
+                    auto_cursor += 1;
+                }
+                if (auto_cursor >= cell_count) return error.InvalidStyle;
+                placement = .{ .column = auto_cursor % columns.len, .row = auto_cursor / columns.len };
+                auto_cursor += 1;
+            }
+            (try self.nodeAt(child_id)).grid_placement = placement;
+        }
+
+        for (children) |child_id| {
+            const child_style = try self.style(child_id);
+            if (child_style.display == .none or child_style.position == .absolute) continue;
+            const placement = (try self.nodeConstAt(child_id)).grid_placement.?;
+            const child_width = gridTrackDimension(columns, placement.column, size.width, column_gap);
+            const child_height = gridTrackDimension(rows, placement.row, size.height, row_gap);
+            const child_x = origin.x + gridTrackOffset(columns, placement.column, size.width, column_gap);
+            const child_y = origin.y + gridTrackOffset(rows, placement.row, size.height, row_gap);
+            try self.computeNode(child_id, .{ .x = child_x, .y = child_y }, size, .{
+                .width = child_width,
+                .height = child_height,
+            }, false);
+        }
+    }
+
+    fn gridCellOccupied(self: *LayoutTree, children: []const NodeId, cell: usize, column_count: usize) Error!bool {
+        for (children) |child_id| {
+            const child_node = try self.nodeConstAt(child_id);
+            if (child_node.style.display == .none or child_node.style.position == .absolute) continue;
+            const occupied = if (child_node.style.grid_column != 0)
+                (child_node.style.grid_column - 1) + (child_node.style.grid_row - 1) * column_count == cell
+            else if (child_node.grid_placement) |placement|
+                placement.column + placement.row * column_count == cell
+            else
+                false;
+            if (occupied) return true;
+        }
+        return false;
+    }
+    fn computeAbsolute(
+        self: *LayoutTree,
+        id: NodeId,
+        style_value: Style,
+        containing: Dimensions,
+        parent_origin: Point,
+    ) Error!void {
         var width = resolveDimension(style_value.width, containing.width, 0);
         var height = resolveDimension(style_value.height, containing.height, 0);
         const left = insetValue(style_value.left, containing.width);
@@ -338,8 +474,8 @@ pub const LayoutTree = struct {
         const bottom = insetValue(style_value.bottom, containing.height);
         if (style_value.width == .auto and left != null and right != null) width = @max(containing.width - left.? - right.?, 0);
         if (style_value.height == .auto and top != null and bottom != null) height = @max(containing.height - top.? - bottom.?, 0);
-        const x = if (left) |value| containing.width * 0 + value else if (right) |value| containing.width - value - width else 0;
-        const y = if (top) |value| containing.height * 0 + value else if (bottom) |value| containing.height - value - height else 0;
+        const x = parent_origin.x + (if (left) |value| value else if (right) |value| containing.width - value - width else 0);
+        const y = parent_origin.y + (if (top) |value| value else if (bottom) |value| containing.height - value - height else 0);
         try self.computeNode(id, .{ .x = x, .y = y }, containing, .{ .width = width, .height = height }, false);
     }
 
@@ -383,6 +519,41 @@ fn finite(value: f32) bool {
     return std.math.isFinite(value);
 }
 
+fn effectiveGap(specific: f32, shared: f32) f32 {
+    return if (specific != 0) specific else shared;
+}
+
+fn gridTrackDimension(tracks: []const GridTrack, index: usize, available: f32, gap: f32) f32 {
+    const total_gap = gap * @as(f32, @floatFromInt(tracks.len - 1));
+    const usable = @max(available - total_gap, 0);
+    var fixed: f32 = 0;
+    var fractions: f32 = 0;
+    for (tracks) |track| switch (track) {
+        .fixed => |value| fixed += value,
+        .fr => |value| fractions += value,
+    };
+    return switch (tracks[index]) {
+        .fixed => |value| value,
+        .fr => |value| if (fractions > 0) @max(usable - fixed, 0) * value / fractions else 0,
+    };
+}
+
+fn gridTrackOffset(tracks: []const GridTrack, index: usize, available: f32, gap: f32) f32 {
+    var offset: f32 = 0;
+    for (0..index) |track_index| {
+        offset += gridTrackDimension(tracks, track_index, available, gap) + gap;
+    }
+    return offset;
+}
+
+fn validateGridCapacity(style: Style, options: Options) Error!void {
+    if (style.display != .grid) return;
+    if (style.grid_columns.len == 0 or style.grid_rows.len == 0) return error.InvalidStyle;
+    if (style.grid_columns.len > options.max_grid_tracks or style.grid_rows.len > options.max_grid_tracks) {
+        return error.GridTrackCapacityExceeded;
+    }
+}
+
 fn validateDimensions(value: Dimensions) Error!void {
     if (!finite(value.width) or !finite(value.height) or value.width < 0 or value.height < 0) {
         return error.InvalidDimensions;
@@ -391,6 +562,21 @@ fn validateDimensions(value: Dimensions) Error!void {
 
 fn validateStyle(style: Style) Error!void {
     if (!finite(style.flex_grow) or style.flex_grow < 0) return error.InvalidStyle;
+    if (!finite(style.grid_column_gap) or style.grid_column_gap < 0 or
+        !finite(style.grid_row_gap) or style.grid_row_gap < 0 or
+        !finite(style.grid_gap) or style.grid_gap < 0)
+    {
+        return error.InvalidStyle;
+    }
+    for (style.grid_columns) |track| switch (track) {
+        .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
+        .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
+    };
+    for (style.grid_rows) |track| switch (track) {
+        .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
+        .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
+    };
+    if ((style.grid_column == 0) != (style.grid_row == 0)) return error.InvalidStyle;
     const dimensions = [_]Dimension{ style.width, style.height, style.left, style.right, style.top, style.bottom };
     for (dimensions) |dimension| switch (dimension) {
         .auto => {},
@@ -491,4 +677,61 @@ test "allocation failure and child capacity leave mutation unchanged" {
     try std.testing.expectEqual(@as(usize, 1), try tree.childCount(root));
     try std.testing.expectError(error.NodeCapacityExceeded, tree.create(.{}));
     try std.testing.expectEqual(@as(usize, 3), tree.live_count);
+}
+test "grid fixed and fractional tracks place explicit and automatic children" {
+    const columns = [_]GridTrack{ .{ .fixed = 30 }, .{ .fr = 1 } };
+    const rows = [_]GridTrack{ .{ .fixed = 10 }, .{ .fr = 1 } };
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 80 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+        .grid_gap = 5,
+    });
+    const explicit_a = try tree.create(.{ .grid_column = 2, .grid_row = 1 });
+    const explicit_b = try tree.create(.{ .grid_column = 1, .grid_row = 2 });
+    const automatic = try tree.create(.{});
+    try tree.appendChild(root, explicit_a);
+    try tree.appendChild(root, explicit_b);
+    try tree.appendChild(root, automatic);
+    try tree.compute(root, .{ .width = 100, .height = 80 });
+    try std.testing.expectEqual(Layout{ .x = 35, .width = 65, .height = 10 }, try tree.readLayout(explicit_a));
+    try std.testing.expectEqual(Layout{ .y = 15, .width = 30, .height = 65 }, try tree.readLayout(explicit_b));
+    try std.testing.expectEqual(Layout{ .width = 30, .height = 10 }, try tree.readLayout(automatic));
+}
+
+test "grid excludes none and absolute children from placement" {
+    const tracks = [_]GridTrack{.{ .fixed = 40 }};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 40 },
+        .height = .{ .length = 40 },
+        .grid_columns = &tracks,
+        .grid_rows = &tracks,
+    });
+    const hidden = try tree.create(.{ .display = .none });
+    const absolute = try tree.create(.{ .position = .absolute, .width = .{ .length = 5 }, .height = .{ .length = 6 }, .left = .{ .length = 3 }, .top = .{ .length = 4 } });
+    const item = try tree.create(.{});
+    try tree.appendChild(root, hidden);
+    try tree.appendChild(root, absolute);
+    try tree.appendChild(root, item);
+    try tree.compute(root, .{ .width = 40, .height = 40 });
+    try std.testing.expectEqual(Layout{}, try tree.readLayout(hidden));
+    try std.testing.expectEqual(Layout{ .x = 3, .y = 4, .width = 5, .height = 6 }, try tree.readLayout(absolute));
+    try std.testing.expectEqual(Layout{ .width = 40, .height = 40 }, try tree.readLayout(item));
+}
+
+test "grid rejects invalid tracks and bounded track capacity" {
+    const one = [_]GridTrack{.{ .fixed = 10 }};
+    const two = [_]GridTrack{ .{ .fixed = 10 }, .{ .fr = 1 } };
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4, .max_grid_tracks = 1 });
+    defer tree.deinit();
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one, .grid_rows = &[_]GridTrack{.{ .fr = 0 }} }));
+    try std.testing.expectError(error.GridTrackCapacityExceeded, tree.create(.{ .display = .grid, .grid_columns = &two, .grid_rows = &one }));
 }

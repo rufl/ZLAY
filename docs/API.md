@@ -568,4 +568,7 @@ It currently supports generational node IDs, style mutation with dirty
 propagation, row/column flex distribution, `display: none`, absolute children
 with insets, and auto/length/percentage dimensions. It is intentionally
 separate from `Context`, has bounded node/child capacities, and does not yet
-implement grid, block flow, CSS parsing, or text measurement.
+implement block flow, CSS parsing, or text measurement. The current bounded
+grid subset supports explicit fixed and fractional tracks, gaps, and one-based
+explicit or automatic child placement. Grid spans and intrinsic track sizing
+remain outside this API.
