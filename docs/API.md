@@ -599,3 +599,12 @@ selection, insertion, deletion, and bounded capacity. Virtual-list helpers
 return deterministic half-open visible ranges with optional overscan. UTF-8
 grapheme behavior, font measurement, row rendering, and data ownership remain
 application-owned.
+
+## Accessibility and reduced motion
+
+`zlay.accessibility` provides renderer-neutral semantic metadata and a
+caller-storage-backed registry. Roles, labels, descriptions, and state flags
+are exposed as borrowed values for application adapters. Its reduced-motion
+policy settles opt-in animation calculations deterministically without changing
+the existing Clay-compatible transition path. OS accessibility mappings,
+announcements, focus visuals, and platform input remain application-owned.
