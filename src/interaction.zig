@@ -132,6 +132,24 @@ pub const Interaction = struct {
         self.focused_id = null;
     }
 
+    pub fn focusFirst(self: *Interaction) ?ElementId {
+        if (self.count == 0) {
+            self.focused_id = null;
+            return null;
+        }
+        self.focused_id = self.storage[0];
+        return self.focused_id;
+    }
+
+    pub fn focusLast(self: *Interaction) ?ElementId {
+        if (self.count == 0) {
+            self.focused_id = null;
+            return null;
+        }
+        self.focused_id = self.storage[self.count - 1];
+        return self.focused_id;
+    }
+
     /// Move forward, wrapping from the last element to the first.
     pub fn focusNext(self: *Interaction) ?ElementId {
         return self.focusNextWithMode(.wrap);
@@ -327,6 +345,22 @@ test "keyboard dispatch follows focus and invalid hit targets are rejected" {
     try std.testing.expect(state.shouldDispatch(.{ .kind = .keyboard }, focused));
     const invalid_hit = state.dispatch(.{ .kind = .pointer, .hit_target = stale });
     try std.testing.expect(!invalid_hit.handled());
+}
+
+test "focus first and last handle empty and stale focus" {
+    var storage: [2]ElementId = undefined;
+    var state = Interaction.init(&storage);
+    try std.testing.expect(state.focusFirst() == null);
+    const first = ElementId{ .id = 10 };
+    const last = ElementId{ .id = 20 };
+    try state.register(first);
+    try state.register(last);
+    try std.testing.expectEqual(first, state.focusFirst().?);
+    try std.testing.expectEqual(last, state.focusLast().?);
+    state.focused_id = .{ .id = 99 };
+    try std.testing.expectEqual(first, state.focusFirst().?);
+    state.resetFrame();
+    try std.testing.expect(state.focusLast() == null);
 }
 
 test "registration capacity is bounded and reset starts a new frame" {
