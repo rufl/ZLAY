@@ -150,6 +150,20 @@ pub const Interaction = struct {
         self.focused_id = null;
     }
 
+    pub fn focusedIndex(self: *const Interaction) ?usize {
+        return self.focusIndex();
+    }
+
+    /// Focus the registered element at `index`; out-of-range clears focus.
+    pub fn focusAt(self: *Interaction, index: usize) ?ElementId {
+        if (index >= self.count) {
+            self.focused_id = null;
+            return null;
+        }
+        self.focused_id = self.storage[index];
+        return self.focused_id;
+    }
+
     pub fn focusFirst(self: *Interaction) ?ElementId {
         if (self.count == 0) {
             self.focused_id = null;
@@ -406,6 +420,20 @@ test "focus first and last handle empty and stale focus" {
     try std.testing.expectEqual(first, state.focusFirst().?);
     state.resetFrame();
     try std.testing.expect(state.focusLast() == null);
+}
+
+test "indexed focus selection reports stable registration positions" {
+    var storage: [2]ElementId = undefined;
+    var state = Interaction.init(&storage);
+    const first = ElementId{ .id = 10 };
+    const last = ElementId{ .id = 20 };
+    try state.register(first);
+    try state.register(last);
+    try std.testing.expect(state.focusedIndex() == null);
+    try std.testing.expectEqual(last, state.focusAt(1).?);
+    try std.testing.expectEqual(@as(usize, 1), state.focusedIndex().?);
+    try std.testing.expect(state.focusAt(2) == null);
+    try std.testing.expect(state.focused() == null);
 }
 
 test "hover tracking validates targets and clears with lifecycle" {
