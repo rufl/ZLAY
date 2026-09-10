@@ -649,9 +649,10 @@ drawing, platform input, and accessibility semantics remain application-owned.
 and pure virtual-list range calculations. `TextInput` supports cursor movement,
 selection, insertion, deletion, and bounded capacity. Virtual-list helpers
 return deterministic half-open visible ranges with optional overscan;
-`VirtualListState.scrollToIndex` reveals a valid item while clamping to the
-maximum scroll extent. UTF-8 grapheme behavior, font measurement, row rendering,
-and data ownership remain application-owned.
+`scrollOffset` reports the current offset, `maxScrollOffset` reports the
+finite content bound, and `VirtualListState.scrollToIndex` reveals a valid item
+while clamping to that bound. UTF-8 grapheme behavior, font measurement, row
+rendering, and data ownership remain application-owned.
 
 ## Accessibility and reduced motion
 

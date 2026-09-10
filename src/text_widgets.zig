@@ -329,6 +329,20 @@ pub const VirtualListState = struct {
         self.scroll_offset = scroll_offset;
     }
 
+    pub fn scrollOffset(self: *const VirtualListState) f32 {
+        return self.scroll_offset;
+    }
+
+    pub fn maxScrollOffset(self: *const VirtualListState) Error!f32 {
+        try validateVirtualList(self.item_extent, self.viewport_extent, self.scroll_offset);
+        const extent = @as(f64, @floatFromInt(self.item_count)) * @as(f64, self.item_extent);
+        const max_offset = @max(extent - @as(f64, self.viewport_extent), 0);
+        if (!std.math.isFinite(max_offset) or max_offset > std.math.floatMax(f32)) {
+            return error.InvalidRange;
+        }
+        return @floatCast(max_offset);
+    }
+
     /// Scrolls far enough to reveal an item, clamped to the content extent.
     pub fn scrollToIndex(self: *VirtualListState, index: usize) Error!void {
         if (index >= self.item_count) return error.InvalidIndex;
@@ -446,6 +460,8 @@ test "virtual list range clamps boundaries and applies overscan" {
 
 test "virtual list scrollToIndex reveals and clamps target items" {
     var list = try VirtualListState.init(10, 20, 60, 0, 0);
+    try std.testing.expectEqual(@as(f32, 140), try list.maxScrollOffset());
+    try std.testing.expectEqual(@as(f32, 0), list.scrollOffset());
     try list.scrollToIndex(3);
     try std.testing.expectEqual(@as(f32, 60), list.scroll_offset);
     try list.scrollToIndex(9);
