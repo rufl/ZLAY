@@ -59,8 +59,8 @@ pub const Interaction = struct {
     storage: []ElementId,
     count: usize = 0,
     focused_id: ?ElementId = null,
+    hovered_id: ?ElementId = null,
     captured_id: ?ElementId = null,
-
     /// Borrow `storage`; it must remain alive and unmoved for this state.
     pub fn init(storage: []ElementId) Interaction {
         return .{ .storage = storage };
@@ -100,6 +100,7 @@ pub const Interaction = struct {
         self.count = last;
         if (sameId(self.focused_id, id)) self.focused_id = null;
         if (sameId(self.captured_id, id)) self.captured_id = null;
+        if (sameId(self.hovered_id, id)) self.hovered_id = null;
         return true;
     }
 
@@ -109,6 +110,7 @@ pub const Interaction = struct {
         self.count = 0;
         self.focused_id = null;
         self.captured_id = null;
+        self.hovered_id = null;
     }
 
     pub fn reset(self: *Interaction) void {
@@ -120,6 +122,22 @@ pub const Interaction = struct {
             if (self.contains(id)) return id;
         }
         return null;
+    }
+
+    pub fn hovered(self: *const Interaction) ?ElementId {
+        if (self.hovered_id) |id| {
+            if (self.contains(id)) return id;
+        }
+        return null;
+    }
+
+    /// Set the current hover target; null clears it.
+    pub fn setHovered(self: *Interaction, id: ?ElementId) bool {
+        if (id) |value| {
+            if (!self.contains(value)) return false;
+        }
+        self.hovered_id = id;
+        return true;
     }
 
     pub fn focus(self: *Interaction, id: ElementId) bool {
@@ -361,6 +379,25 @@ test "focus first and last handle empty and stale focus" {
     try std.testing.expectEqual(first, state.focusFirst().?);
     state.resetFrame();
     try std.testing.expect(state.focusLast() == null);
+}
+
+test "hover tracking validates targets and clears with lifecycle" {
+    var storage: [2]ElementId = undefined;
+    var state = Interaction.init(&storage);
+    const first = ElementId{ .id = 1 };
+    const second = ElementId{ .id = 2 };
+    const stale = ElementId{ .id = 99 };
+    try state.register(first);
+    try state.register(second);
+    try std.testing.expect(!state.setHovered(stale));
+    try std.testing.expect(state.hovered() == null);
+    try std.testing.expect(state.setHovered(first));
+    try std.testing.expectEqual(first, state.hovered().?);
+    try std.testing.expect(state.unregister(first));
+    try std.testing.expect(state.hovered() == null);
+    try std.testing.expect(state.setHovered(second));
+    state.resetFrame();
+    try std.testing.expect(state.hovered() == null);
 }
 
 test "registration capacity is bounded and reset starts a new frame" {

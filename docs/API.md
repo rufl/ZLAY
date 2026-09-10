@@ -622,12 +622,13 @@ and written nodes for profiling and regression checks.
 
 ## Interaction foundation
 
-`zlay.interaction.Interaction` provides caller-storage-backed focus and pointer
-state. Registering elements establishes deterministic keyboard order. `focusFirst`
-and `focusLast` select explicit endpoints; navigation supports wrapping or
-clamping, pointer capture is explicit, and `dispatch` returns a renderer-neutral
+`zlay.interaction.Interaction` provides caller-storage-backed focus, hover, and
+pointer state. Registering elements establishes deterministic keyboard order.
+`focusFirst` and `focusLast` select explicit endpoints; navigation supports
+wrapping or clamping, `setHovered` validates and updates the current hover
+target, pointer capture is explicit, and `dispatch` returns a renderer-neutral
 target decision for keyboard focus, pointer capture, or hit-test input.
-Unregistering an element clears any focus or capture owned by it.
+Unregistering an element clears any focus, hover, or capture owned by it.
 
 ## Widget state primitives
 
