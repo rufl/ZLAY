@@ -368,6 +368,27 @@ pub const LayoutTree = struct {
         self.computeNode(root_id, .{}, available, null, true, null, null, null) catch |err| return err;
     }
 
+    /// Recomputes the complete subtree rooted at the supplied node's topmost
+    /// attached ancestor.
+    ///
+    /// Layout dependencies flow through containers: a descendant mutation can
+    /// change its parent's size, positioning, clipping, or sibling
+    /// distribution. A descendant-only pass is therefore not safe. This API
+    /// conservatively walks to the root and performs the same full computation
+    /// as `compute`; `available` is the containing size for that root.
+    ///
+    /// The supplied node need not currently be dirty. This deliberately
+    /// preserves `compute` semantics when the available root dimensions have
+    /// changed, while still providing one entry point for dirty propagation.
+    pub fn computeDirty(self: *LayoutTree, dirty_id: NodeId, available: Dimensions) Error!void {
+        try validateDimensions(available);
+        var root_id = dirty_id;
+        while ((try self.nodeConstAt(root_id)).parent) |parent_id| {
+            root_id = parent_id;
+        }
+        try self.compute(root_id, available);
+    }
+
     /// Compute layout using caller-supplied intrinsic minimum, preferred, and
     /// maximum dimensions for auto-sized leaf nodes.
     pub fn computeWithMeasureTiers(
@@ -2005,11 +2026,69 @@ test "intrinsic measurement sizes auto leaf dimensions" {
 test "intrinsic measurement rejects non-finite dimensions" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 2 });
     defer tree.deinit();
+
     const leaf = try tree.create(.{});
     try std.testing.expectError(
         error.InvalidDimensions,
         tree.computeWithMeasure(leaf, .{ .width = 100, .height = 80 }, measureInvalidIntrinsic, null),
     );
+}
+test "computeDirty computes an uninitialized tree from a descendant" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 50 } });
+    const child = try tree.create(.{ .width = .{ .length = 24 }, .height = .{ .length = 12 } });
+    try tree.appendChild(root, child);
+
+    try tree.computeDirty(child, .{ .width = 100, .height = 50 });
+
+    try std.testing.expectEqual(Layout{ .width = 100, .height = 50 }, try tree.readLayout(root));
+    try std.testing.expectEqual(Layout{ .width = 24, .height = 12 }, try tree.readLayout(child));
+    try std.testing.expect(!(try tree.isDirty(root)));
+    try std.testing.expect(!(try tree.isDirty(child)));
+}
+
+test "computeDirty matches full compute after descendant style mutation" {
+    var full_tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer full_tree.deinit();
+    var dirty_tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer dirty_tree.deinit();
+
+    const root_style = Style{ .width = .{ .length = 120 }, .height = .{ .length = 60 } };
+    const container_style = Style{ .width = .{ .length = 40 }, .height = .{ .length = 30 } };
+    const leaf_style = Style{ .width = .{ .length = 10 }, .height = .{ .length = 10 } };
+    const sibling_style = Style{ .width = .{ .length = 20 }, .height = .{ .length = 15 } };
+    const changed_style = Style{ .width = .{ .length = 30 }, .height = .{ .length = 10 } };
+
+    const full_root = try full_tree.create(root_style);
+    const full_container = try full_tree.create(container_style);
+    const full_leaf = try full_tree.create(leaf_style);
+    const full_sibling = try full_tree.create(sibling_style);
+    try full_tree.appendChild(full_root, full_container);
+    try full_tree.appendChild(full_container, full_leaf);
+    try full_tree.appendChild(full_root, full_sibling);
+
+    const dirty_root = try dirty_tree.create(root_style);
+    const dirty_container = try dirty_tree.create(container_style);
+    const dirty_leaf = try dirty_tree.create(leaf_style);
+    const dirty_sibling = try dirty_tree.create(sibling_style);
+    try dirty_tree.appendChild(dirty_root, dirty_container);
+    try dirty_tree.appendChild(dirty_container, dirty_leaf);
+    try dirty_tree.appendChild(dirty_root, dirty_sibling);
+
+    const available = Dimensions{ .width = 120, .height = 60 };
+    try full_tree.compute(full_root, available);
+    try dirty_tree.compute(dirty_root, available);
+    try full_tree.setStyle(full_leaf, changed_style);
+    try dirty_tree.setStyle(dirty_leaf, changed_style);
+
+    try full_tree.compute(full_root, available);
+    try dirty_tree.computeDirty(dirty_leaf, available);
+
+    try std.testing.expectEqual(try full_tree.readLayout(full_root), try dirty_tree.readLayout(dirty_root));
+    try std.testing.expectEqual(try full_tree.readLayout(full_container), try dirty_tree.readLayout(dirty_container));
+    try std.testing.expectEqual(try full_tree.readLayout(full_leaf), try dirty_tree.readLayout(dirty_leaf));
+    try std.testing.expectEqual(try full_tree.readLayout(full_sibling), try dirty_tree.readLayout(dirty_sibling));
 }
 
 test "retained tree mutates children and propagates dirty state" {
