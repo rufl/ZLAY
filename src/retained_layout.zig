@@ -32,6 +32,7 @@ pub const NodeId = struct {
 pub const Display = enum { flex, grid, none, overlay };
 pub const Position = enum { relative, absolute };
 pub const FlexDirection = enum { row, column };
+pub const FlexWrap = enum { nowrap, wrap };
 pub const AlignItems = enum { stretch, flex_start, flex_end, center };
 pub const AlignSelf = enum { auto, stretch, flex_start, flex_end, center };
 /// A nine-position anchor used by overlay children.
@@ -128,6 +129,7 @@ pub const Style = struct {
     display: Display = .flex,
     position: Position = .relative,
     flex_direction: FlexDirection = .row,
+    flex_wrap: FlexWrap = .nowrap,
     align_items: AlignItems = .flex_start,
     align_self: AlignSelf = .auto,
     /// Anchor used when this node is a relative child of an overlay parent.
@@ -156,6 +158,8 @@ pub const Style = struct {
     grid_column_gap: f32 = 0,
     grid_row_gap: f32 = 0,
     grid_gap: f32 = 0,
+    /// Minimum spacing between flex items and between wrapped lines.
+    flex_gap: f32 = 0,
     /// One-based explicit placement. Zero means auto-placement.
     grid_column: usize = 0,
     grid_row: usize = 0,
@@ -513,6 +517,17 @@ pub const LayoutTree = struct {
             );
             child_node.flex_size = child_node.flex_base;
         }
+        if (style_value.flex_wrap == .wrap) {
+            try self.computeFlexWrap(
+                id,
+                content_origin,
+                content_size,
+                effective_clip,
+                measure,
+                measure_user_data,
+            );
+            return;
+        }
 
         var iterations: usize = 0;
         while (iterations <= children.len) : (iterations += 1) {
@@ -668,6 +683,343 @@ pub const LayoutTree = struct {
             ));
         }
     }
+    fn computeFlexWrap(
+        self: *LayoutTree,
+        id: NodeId,
+        content_origin: Point,
+        content_size: Dimensions,
+        inherited_clip: ?ClipRect,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
+    ) Error!void {
+        const node = try self.nodeConstAt(id);
+        const style_value = node.style;
+        const children = node.children.items;
+        const direction = style_value.flex_direction;
+        const available_main = if (direction == .row) content_size.width else content_size.height;
+        const cross_parent = if (direction == .row) content_size.height else content_size.width;
+        var line_start: usize = 0;
+        var cross_cursor: f32 = 0;
+
+        while (line_start < children.len) {
+            const child_style = (try self.nodeConstAt(children[line_start])).style;
+            if (child_style.display == .none) {
+                try self.hideNode(children[line_start]);
+                line_start += 1;
+                continue;
+            }
+            if (child_style.position == .absolute) {
+                try self.computeAbsolute(
+                    children[line_start],
+                    child_style,
+                    content_size,
+                    content_origin,
+                    inherited_clip,
+                    measure,
+                    measure_user_data,
+                );
+                line_start += 1;
+                continue;
+            }
+
+            const line_end = try self.flexLineEnd(children, line_start, available_main, style_value.flex_gap, direction);
+            try self.resolveFlexLine(children, line_start, line_end, available_main, style_value.flex_gap, direction);
+            const line_cross = try self.flexLineCrossSize(
+                children,
+                line_start,
+                line_end,
+                content_size,
+                cross_parent,
+                direction,
+            );
+            var flow_count: usize = 0;
+            var occupied_main: f32 = 0;
+            for (children[line_start..line_end]) |child_id| {
+                const item_style = (try self.nodeConstAt(child_id)).style;
+                if (item_style.display == .none or item_style.position == .absolute) continue;
+                flow_count += 1;
+                occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
+            }
+            const total_gap = if (flow_count > 1)
+                style_value.flex_gap * @as(f32, @floatFromInt(flow_count - 1))
+            else
+                0;
+            const free_space = @max(boundedSubtract(available_main, boundedAdd(occupied_main, total_gap)), 0);
+            const justify_leading = justifyLeading(style_value.justify_content, free_space, flow_count);
+            const justify_gap = boundedAdd(style_value.flex_gap, justifyGap(style_value.justify_content, free_space, flow_count));
+            var cursor = justify_leading;
+            for (children[line_start..line_end]) |child_id| {
+                const item_style = try self.style(child_id);
+                if (item_style.display == .none) {
+                    try self.hideNode(child_id);
+                    continue;
+                }
+                if (item_style.position == .absolute) {
+                    try self.computeAbsolute(
+                        child_id,
+                        item_style,
+                        content_size,
+                        content_origin,
+                        inherited_clip,
+                        measure,
+                        measure_user_data,
+                    );
+                    continue;
+                }
+                try self.computeFlexWrapChild(
+                    child_id,
+                    item_style,
+                    content_origin,
+                    content_size,
+                    inherited_clip,
+                    direction,
+                    cross_cursor,
+                    line_cross,
+                    cursor,
+                    justify_gap,
+                    measure,
+                    measure_user_data,
+                    style_value.align_items,
+                );
+                const child_layout = try self.readLayout(child_id);
+                const main_margin = marginAlongAxis(item_style.margin, direction);
+                cursor = boundedAdd(cursor, boundedAdd(
+                    if (direction == .row) child_layout.width else child_layout.height,
+                    boundedAdd(main_margin, justify_gap),
+                ));
+            }
+            cross_cursor = boundedAdd(cross_cursor, boundedAdd(line_cross, style_value.flex_gap));
+            line_start = line_end;
+        }
+    }
+
+    fn flexLineEnd(
+        self: *LayoutTree,
+        children: []const NodeId,
+        start: usize,
+        available_main: f32,
+        gap: f32,
+        direction: FlexDirection,
+    ) Error!usize {
+        var end = start;
+        var occupied: f32 = 0;
+        var count: usize = 0;
+        while (end < children.len) : (end += 1) {
+            const item_style = (try self.nodeConstAt(children[end])).style;
+            if (item_style.display == .none or item_style.position == .absolute) continue;
+            const item_size = (try self.nodeConstAt(children[end])).flex_base;
+            const needed = if (count == 0) item_size else boundedAdd(gap, item_size);
+            if (count != 0 and boundedAdd(occupied, needed) > available_main) break;
+            occupied = boundedAdd(occupied, needed);
+            count += 1;
+            _ = direction;
+        }
+        return end;
+    }
+
+    fn resolveFlexLine(
+        self: *LayoutTree,
+        children: []const NodeId,
+        start: usize,
+        end: usize,
+        available_main: f32,
+        gap: f32,
+        direction: FlexDirection,
+    ) Error!void {
+        var flow_count: usize = 0;
+        for (children[start..end]) |child_id| {
+            const item_style = (try self.nodeConstAt(child_id)).style;
+            if (item_style.display == .none or item_style.position == .absolute) continue;
+            const item_node = try self.nodeAt(child_id);
+            item_node.flex_frozen = false;
+            item_node.flex_size = item_node.flex_base;
+            flow_count += 1;
+        }
+        var iterations: usize = 0;
+        while (iterations <= flow_count) : (iterations += 1) {
+            var frozen_sum: f32 = 0;
+            var unfrozen_base: f32 = 0;
+            var unfrozen_count: usize = 0;
+            for (children[start..end]) |child_id| {
+                const item_node = try self.nodeConstAt(child_id);
+                const item_style = item_node.style;
+                if (item_style.display == .none or item_style.position == .absolute) continue;
+                if (item_node.flex_frozen) {
+                    frozen_sum = boundedAdd(frozen_sum, item_node.flex_size);
+                } else {
+                    unfrozen_base = boundedAdd(unfrozen_base, item_node.flex_base);
+                    unfrozen_count += 1;
+                }
+            }
+            const gap_total = if (flow_count > 1)
+                gap * @as(f32, @floatFromInt(flow_count - 1))
+            else
+                0;
+            const free = boundedSubtract(available_main, boundedAdd(boundedAdd(frozen_sum, unfrozen_base), gap_total));
+            var total_factor: f32 = 0;
+            for (children[start..end]) |child_id| {
+                const item_node = try self.nodeConstAt(child_id);
+                const item_style = item_node.style;
+                if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
+                total_factor = boundedAdd(total_factor, if (free >= 0)
+                    item_style.flex_grow
+                else
+                    item_style.flex_shrink * item_node.flex_base);
+            }
+            if (unfrozen_count == 0 or total_factor == 0) {
+                for (children[start..end]) |child_id| {
+                    const item_node = try self.nodeAt(child_id);
+                    const item_style = item_node.style;
+                    if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
+                    item_node.flex_size = clampFlexMain(item_node.flex_base, item_style, direction, available_main);
+                    item_node.flex_frozen = true;
+                }
+                break;
+            }
+            var froze_any = false;
+            for (children[start..end]) |child_id| {
+                const item_node = try self.nodeAt(child_id);
+                const item_style = item_node.style;
+                if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
+                const factor = if (free >= 0)
+                    item_style.flex_grow
+                else
+                    item_style.flex_shrink * item_node.flex_base;
+                const raw = boundedAdd(item_node.flex_base, free * factor / total_factor);
+                item_node.flex_size = clampFlexMain(raw, item_style, direction, available_main);
+                if (item_node.flex_size != raw) {
+                    item_node.flex_frozen = true;
+                    froze_any = true;
+                }
+            }
+            if (!froze_any) {
+                for (children[start..end]) |child_id| {
+                    const item_node = try self.nodeAt(child_id);
+                    const item_style = item_node.style;
+                    if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
+                    const factor = if (free >= 0)
+                        item_style.flex_grow
+                    else
+                        item_style.flex_shrink * item_node.flex_base;
+                    item_node.flex_size = boundedAdd(item_node.flex_base, free * factor / total_factor);
+                    item_node.flex_frozen = true;
+                }
+                break;
+            }
+        }
+    }
+
+    fn flexLineCrossSize(
+        self: *LayoutTree,
+        children: []const NodeId,
+        start: usize,
+        end: usize,
+        content_size: Dimensions,
+        cross_parent: f32,
+        direction: FlexDirection,
+    ) Error!f32 {
+        var result: f32 = 0;
+        for (children[start..end]) |child_id| {
+            const item_node = try self.nodeConstAt(child_id);
+            const item_style = item_node.style;
+            if (item_style.display == .none or item_style.position == .absolute) continue;
+            const measurement = item_node.intrinsic_measurement;
+            const dimension = if (direction == .row) item_style.height else item_style.width;
+            var cross_size = resolveDimension(dimension, cross_parent, 0);
+            if (dimension == .auto) {
+                if (measurement) |measured| {
+                    cross_size = if (direction == .row) measured.height else measured.width;
+                }
+            }
+            cross_size = clampDimension(
+                cross_size,
+                if (direction == .row) item_style.min_height else item_style.min_width,
+                if (direction == .row) item_style.max_height else item_style.max_width,
+                cross_parent,
+            );
+            result = @max(result, boundedAdd(cross_size, marginAcrossAxis(item_style.margin, direction)));
+        }
+        _ = content_size;
+        return result;
+    }
+
+    fn computeFlexWrapChild(
+        self: *LayoutTree,
+        child_id: NodeId,
+        child_style: Style,
+        content_origin: Point,
+        content_size: Dimensions,
+        inherited_clip: ?ClipRect,
+        direction: FlexDirection,
+        cross_cursor: f32,
+        line_cross: f32,
+        cursor: f32,
+        justify_gap: f32,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
+        container_align: AlignItems,
+    ) Error!void {
+        const child_node = try self.nodeConstAt(child_id);
+        const measurement = child_node.intrinsic_measurement;
+        const main_margin = marginAlongAxis(child_style.margin, direction);
+        const cross_margin = marginAcrossAxis(child_style.margin, direction);
+        const child_align = resolveAlign(child_style.align_self, container_align);
+        var child_width = resolveDimension(child_style.width, content_size.width, 0);
+        var child_height = resolveDimension(child_style.height, content_size.height, 0);
+        if (direction == .row) {
+            child_width = boundedSubtract(child_node.flex_size, main_margin);
+            if (child_style.height == .auto) {
+                child_height = if (child_align == .stretch)
+                    boundedSubtract(line_cross, cross_margin)
+                else if (measurement) |measured|
+                    measured.height
+                else
+                    boundedSubtract(line_cross, cross_margin);
+            }
+        } else {
+            child_height = boundedSubtract(child_node.flex_size, main_margin);
+            if (child_style.width == .auto) {
+                child_width = if (child_align == .stretch)
+                    boundedSubtract(line_cross, cross_margin)
+                else if (measurement) |measured|
+                    measured.width
+                else
+                    boundedSubtract(line_cross, cross_margin);
+            }
+        }
+        child_width = clampDimension(child_width, child_style.min_width, child_style.max_width, content_size.width);
+        child_height = clampDimension(child_height, child_style.min_height, child_style.max_height, content_size.height);
+        const cross_size = if (direction == .row) child_height else child_width;
+        const cross_offset = crossAxisOffset(
+            child_align,
+            line_cross,
+            cross_size,
+            child_style.margin,
+            direction,
+        );
+        const child_origin = if (direction == .row)
+            Point{
+                .x = boundedAdd(boundedAdd(content_origin.x, cursor), child_style.margin.left),
+                .y = boundedAdd(boundedAdd(content_origin.y, cross_cursor), cross_offset),
+            }
+        else
+            Point{
+                .x = boundedAdd(boundedAdd(content_origin.x, cross_cursor), cross_offset),
+                .y = boundedAdd(boundedAdd(content_origin.y, cursor), child_style.margin.top),
+            };
+        try self.computeNode(
+            child_id,
+            child_origin,
+            content_size,
+            .{ .width = child_width, .height = child_height },
+            false,
+            inherited_clip,
+            measure,
+            measure_user_data,
+        );
+        _ = justify_gap;
+    }
+
     fn computeOverlay(
         self: *LayoutTree,
         id: NodeId,
@@ -1217,7 +1569,8 @@ fn validateEdges(edges: Edges) Error!void {
 fn validateStyle(style: Style) Error!void {
     try validateEdges(style.padding);
     try validateEdges(style.margin);
-    if (@intFromEnum(style.align_items) >= 4 or
+    if (@intFromEnum(style.flex_wrap) >= 2 or
+        @intFromEnum(style.align_items) >= 4 or
         @intFromEnum(style.align_self) >= 5 or
         @intFromEnum(style.alignment) >= 9 or
         @intFromEnum(style.justify_content) >= 6)
@@ -1239,7 +1592,8 @@ fn validateStyle(style: Style) Error!void {
     }
     if (!finite(style.grid_column_gap) or style.grid_column_gap < 0 or
         !finite(style.grid_row_gap) or style.grid_row_gap < 0 or
-        !finite(style.grid_gap) or style.grid_gap < 0)
+        !finite(style.grid_gap) or style.grid_gap < 0 or
+        !finite(style.flex_gap) or style.flex_gap < 0)
     {
         return error.InvalidStyle;
     }
@@ -1816,4 +2170,69 @@ test "flex justification distributes positive main-axis free space" {
     try tree.compute(root, .{ .width = 100, .height = 20 });
     try std.testing.expectEqual(@as(f32, 35), (try tree.readLayout(first)).x);
     try std.testing.expectEqual(@as(f32, 45), (try tree.readLayout(second)).x);
+}
+test "wrapped row forms bounded lines and places cross axis" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .flex_wrap = .wrap,
+        .width = .{ .length = 50 },
+        .height = .{ .length = 40 },
+    });
+    const first = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    const second = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    const third = try tree.create(.{ .width = .{ .length = 20 }, .height = .{ .length = 10 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.appendChild(root, third);
+    try tree.compute(root, .{ .width = 50, .height = 40 });
+    try std.testing.expectEqual(Layout{ .width = 30, .height = 10 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .y = 10, .width = 30, .height = 10 }, try tree.readLayout(second));
+    try std.testing.expectEqual(Layout{ .x = 30, .y = 10, .width = 20, .height = 10 }, try tree.readLayout(third));
+}
+
+test "wrapped column forms bounded lines and places cross axis" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .flex_direction = .column,
+        .flex_wrap = .wrap,
+        .width = .{ .length = 40 },
+        .height = .{ .length = 50 },
+    });
+    const first = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 30 } });
+    const second = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 30 } });
+    const third = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 20 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.appendChild(root, third);
+    try tree.compute(root, .{ .width = 40, .height = 50 });
+    try std.testing.expectEqual(Layout{ .width = 10, .height = 30 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .x = 10, .width = 10, .height = 30 }, try tree.readLayout(second));
+    try std.testing.expectEqual(Layout{ .x = 10, .y = 30, .width = 10, .height = 20 }, try tree.readLayout(third));
+}
+
+test "wrapped flex gap separates main and cross axes" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .flex_wrap = .wrap,
+        .flex_gap = 5,
+        .width = .{ .length = 60 },
+        .height = .{ .length = 50 },
+    });
+    const first = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    const second = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.compute(root, .{ .width = 60, .height = 50 });
+    try std.testing.expectEqual(Layout{ .width = 30, .height = 10 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .y = 15, .width = 30, .height = 10 }, try tree.readLayout(second));
+}
+
+test "flex wrapping rejects invalid bounded values" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_gap = -1 }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_gap = std.math.inf(f32) }));
 }
