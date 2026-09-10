@@ -288,6 +288,8 @@ test "caller-owned records support create lookup and update" {
     const replacement = Style{ .display = .grid };
     const box = Layout{ .x = 4, .y = 5, .width = 6, .height = 7 };
     try store.update(first, .{ .style = replacement, .layout = box });
+    try std.testing.expectEqual(replacement, records[first.index].style);
+    try std.testing.expectEqual(box, records[first.index].layout);
     try std.testing.expectEqual(replacement, try store.style(first));
     try std.testing.expectEqual(box, try store.layout(first));
     try std.testing.expect((try store.get(second)).parent == null);
@@ -302,6 +304,7 @@ test "children are caller-owned and bounded" {
     const second_child = try store.create(.{});
 
     try store.appendChild(parent_id, first_child);
+    try std.testing.expectEqual(first_child, children_storage[parent_id.index]);
     try std.testing.expectEqual(@as(usize, 1), (try store.children(parent_id)).len);
     try std.testing.expectError(error.ChildCapacityExceeded, store.appendChild(parent_id, second_child));
     try std.testing.expectEqual(parent_id, (try store.parent(first_child)).?);
