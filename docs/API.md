@@ -567,10 +567,12 @@ settles directly to the target under reduced motion. Evaluation never allocates.
 game and native UI. It supports generational node IDs; dependency-aware dirty
 recomputation; row/column flex layout; wrapping and reverse wrapping; flex
 basis/grow/shrink; justification; wrapped-line `align_content`; cross-axis and
-baseline alignment; flex auto margins; nine-position overlays; LTR/RTL flex,
-overlay, and grid placement; min/max dimensions; aspect ratios; `display:
-none`; physical absolute insets; padding; margins; and
-auto/length/percentage/stretch/min-content/max-content/fit-content dimensions.
+baseline alignment; flex auto margins; nine-position overlays with intrinsic
+sizing and per-axis auto margins; LTR/RTL flex, overlay, and grid placement;
+min/max dimensions; aspect ratios; `display: none`; physical absolute insets
+with opposing-inset auto sizing and positioned auto margins; padding; margins;
+and auto/length/percentage/stretch/min-content/max-content/fit-content
+dimensions.
 Shared and axis-specific typed gaps support fixed, percentage, and stretch
 units with optional bounds. `Overflow.clip` exposes inherited renderer-neutral
 clip rectangles.

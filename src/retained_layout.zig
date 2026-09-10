@@ -2,10 +2,11 @@
 //!
 //! This module intentionally implements a bounded flex and grid subset:
 //! row/column flex containers, explicit and implicit grid tracks, sparse/dense
-//! grid auto-placement, `display: none`, absolute children, intrinsic and
-//! explicit content sizing, finite typed gaps, padding, margins, and grid-cell
-//! alignment. There is no text-specific measurement, block layout, or CSS
-//! parser. An optional caller-supplied intrinsic measurement callback provides
+//! grid auto-placement, `display: none`, opposing-inset absolute sizing,
+//! intrinsic and explicit content sizing, finite typed gaps, padding, margins,
+//! and aligned overlay/grid children with auto margins. There is no
+//! text-specific measurement, block layout, or CSS parser. An optional
+//! caller-supplied intrinsic measurement callback provides
 //! finite dimensions for content-sized leaf nodes.
 //! Layout is computed synchronously into caller-owned tree storage; no scratch
 //! allocation is needed by compute.
@@ -720,7 +721,7 @@ pub const LayoutTree = struct {
             style_value.max_width,
             containing.width,
             intrinsic_tiers,
-            needsIntrinsicMeasurement(style_value.width),
+            forced_size == null and needsIntrinsicMeasurement(style_value.width),
             true,
         );
         size.height = clampDimensionWithIntrinsic(
@@ -729,7 +730,7 @@ pub const LayoutTree = struct {
             style_value.max_height,
             containing.height,
             intrinsic_tiers,
-            needsIntrinsicMeasurement(style_value.height),
+            forced_size == null and needsIntrinsicMeasurement(style_value.height),
             false,
         );
 
@@ -1569,7 +1570,7 @@ pub const LayoutTree = struct {
             }
 
             const child_node = try self.nodeAt(child_id);
-            if (child_style.width == .auto or child_style.height == .auto) {
+            if (needsIntrinsicMeasurement(child_style.width) or needsIntrinsicMeasurement(child_style.height)) {
                 if (child_node.children.items.len != 0) {
                     child_node.intrinsic_measurement = try self.preferredNodeSize(
                         child_id,
@@ -1589,8 +1590,22 @@ pub const LayoutTree = struct {
                 .height = resolveDimension(child_style.height, size.height, 0),
             };
             if (child_node.intrinsic_measurement) |measured| {
-                if (child_style.width == .auto) child_size.width = measured.width;
-                if (child_style.height == .auto) child_size.height = measured.height;
+                child_size.width = resolveContentDimension(
+                    child_style.width,
+                    size.width,
+                    child_size.width,
+                    measured,
+                    child_node.intrinsic_tiers,
+                    true,
+                );
+                child_size.height = resolveContentDimension(
+                    child_style.height,
+                    size.height,
+                    child_size.height,
+                    measured,
+                    child_node.intrinsic_tiers,
+                    false,
+                );
             }
             child_size.width = clampDimensionWithIntrinsic(
                 child_size.width,
@@ -1598,7 +1613,7 @@ pub const LayoutTree = struct {
                 child_style.max_width,
                 size.width,
                 child_node.intrinsic_tiers,
-                child_style.width == .auto,
+                needsIntrinsicMeasurement(child_style.width),
                 true,
             );
             if (try self.remeasureLeafAtWidth(
@@ -1617,30 +1632,42 @@ pub const LayoutTree = struct {
                 child_style.max_height,
                 size.height,
                 child_node.intrinsic_tiers,
-                child_style.height == .auto,
+                needsIntrinsicMeasurement(child_style.height),
                 false,
             );
 
             const fractions = alignmentFractions(child_style.alignment);
             const horizontal_fraction = alignmentHorizontalFraction(child_style.alignment, direction);
-            const horizontal_margin = horizontalEdges(child_style.margin);
-            const vertical_margin = verticalEdges(child_style.margin);
+            const margin_left = if (child_style.auto_margin.left) 0 else child_style.margin.left;
+            const margin_right = if (child_style.auto_margin.right) 0 else child_style.margin.right;
+            const margin_top = if (child_style.auto_margin.top) 0 else child_style.margin.top;
+            const margin_bottom = if (child_style.auto_margin.bottom) 0 else child_style.margin.bottom;
             const free_width = @max(
-                boundedSubtract(size.width, boundedAdd(child_size.width, horizontal_margin)),
+                boundedSubtract(size.width, boundedAdd(child_size.width, boundedAdd(margin_left, margin_right))),
                 0,
             );
             const free_height = @max(
-                boundedSubtract(size.height, boundedAdd(child_size.height, vertical_margin)),
+                boundedSubtract(size.height, boundedAdd(child_size.height, boundedAdd(margin_top, margin_bottom))),
                 0,
             );
             const child_origin = Point{
                 .x = boundedAdd(
                     origin.x,
-                    boundedAdd(child_style.margin.left, free_width * horizontal_fraction),
+                    boundedAdd(margin_left, gridAxisOffset(
+                        free_width,
+                        child_style.auto_margin.left,
+                        child_style.auto_margin.right,
+                        horizontal_fraction,
+                    )),
                 ),
                 .y = boundedAdd(
                     origin.y,
-                    boundedAdd(child_style.margin.top, free_height * fractions.y),
+                    boundedAdd(margin_top, gridAxisOffset(
+                        free_height,
+                        child_style.auto_margin.top,
+                        child_style.auto_margin.bottom,
+                        fractions.y,
+                    )),
                 ),
             };
             try self.computeNode(
@@ -2202,26 +2229,38 @@ pub const LayoutTree = struct {
         measure: ?IntrinsicMeasureFunction,
         measure_user_data: ?*anyopaque,
     ) Error!void {
-        var width = resolveDimension(style_value.width, containing.width, 0);
-        var height = resolveDimension(style_value.height, containing.height, 0);
         const left = insetValue(style_value.left, containing.width);
         const right = insetValue(style_value.right, containing.width);
         const top = insetValue(style_value.top, containing.height);
         const bottom = insetValue(style_value.bottom, containing.height);
-        if (style_value.width == .stretch) {
+        const margin_left = if (style_value.auto_margin.left) 0 else style_value.margin.left;
+        const margin_right = if (style_value.auto_margin.right) 0 else style_value.margin.right;
+        const margin_top = if (style_value.auto_margin.top) 0 else style_value.margin.top;
+        const margin_bottom = if (style_value.auto_margin.bottom) 0 else style_value.margin.bottom;
+        const width_from_insets = style_value.width == .auto and left != null and right != null;
+        const height_from_insets = style_value.height == .auto and top != null and bottom != null;
+        var width = resolveDimension(style_value.width, containing.width, 0);
+        var height = resolveDimension(style_value.height, containing.height, 0);
+        if (width_from_insets or style_value.width == .stretch) {
             width = boundedSubtract(
                 containing.width,
-                boundedAdd(left orelse 0, right orelse 0),
+                boundedAdd(
+                    boundedAdd(left orelse 0, right orelse 0),
+                    boundedAdd(margin_left, margin_right),
+                ),
             );
         }
-        if (style_value.height == .stretch) {
+        if (height_from_insets or style_value.height == .stretch) {
             height = boundedSubtract(
                 containing.height,
-                boundedAdd(top orelse 0, bottom orelse 0),
+                boundedAdd(
+                    boundedAdd(top orelse 0, bottom orelse 0),
+                    boundedAdd(margin_top, margin_bottom),
+                ),
             );
         }
         const node_ref = try self.nodeAt(id);
-        if (style_value.width == .auto or style_value.height == .auto) {
+        if (needsIntrinsicMeasurement(style_value.width) or needsIntrinsicMeasurement(style_value.height)) {
             const measured = if (node_ref.children.items.len != 0)
                 try self.preferredNodeSize(id, containing, measure, measure_user_data)
             else if (node_ref.intrinsic_measurement) |cached|
@@ -2233,8 +2272,26 @@ pub const LayoutTree = struct {
                 break :blk value;
             } else null;
             if (measured) |value| {
-                if (style_value.width == .auto) width = value.width;
-                if (style_value.height == .auto) height = value.height;
+                if (!width_from_insets) {
+                    width = resolveContentDimension(
+                        style_value.width,
+                        containing.width,
+                        width,
+                        value,
+                        node_ref.intrinsic_tiers,
+                        true,
+                    );
+                }
+                if (!height_from_insets) {
+                    height = resolveContentDimension(
+                        style_value.height,
+                        containing.height,
+                        height,
+                        value,
+                        node_ref.intrinsic_tiers,
+                        false,
+                    );
+                }
             }
         }
         width = clampDimensionWithIntrinsic(
@@ -2243,7 +2300,7 @@ pub const LayoutTree = struct {
             style_value.max_width,
             containing.width,
             node_ref.intrinsic_tiers,
-            style_value.width == .auto,
+            needsIntrinsicMeasurement(style_value.width) and !width_from_insets,
             true,
         );
         if (try self.remeasureLeafAtWidth(
@@ -2262,27 +2319,63 @@ pub const LayoutTree = struct {
             style_value.max_height,
             containing.height,
             node_ref.intrinsic_tiers,
-            style_value.height == .auto,
+            needsIntrinsicMeasurement(style_value.height) and !height_from_insets,
             false,
         );
+        const horizontal_free = if (left != null and right != null)
+            boundedSubtract(
+                containing.width,
+                boundedAdd(
+                    boundedAdd(left.?, right.?),
+                    boundedAdd(width, boundedAdd(margin_left, margin_right)),
+                ),
+            )
+        else
+            0;
+        const vertical_free = if (top != null and bottom != null)
+            boundedSubtract(
+                containing.height,
+                boundedAdd(
+                    boundedAdd(top.?, bottom.?),
+                    boundedAdd(height, boundedAdd(margin_top, margin_bottom)),
+                ),
+            )
+        else
+            0;
         const x_offset = if (left) |value|
-            boundedAdd(value, style_value.margin.left)
+            boundedAdd(
+                value,
+                boundedAdd(margin_left, gridAxisOffset(
+                    horizontal_free,
+                    style_value.auto_margin.left,
+                    style_value.auto_margin.right,
+                    0,
+                )),
+            )
         else if (right) |value|
             boundedSubtract(
                 boundedSubtract(containing.width, value),
-                boundedAdd(width, style_value.margin.right),
+                boundedAdd(width, margin_right),
             )
         else
-            style_value.margin.left;
+            margin_left;
         const y_offset = if (top) |value|
-            boundedAdd(value, style_value.margin.top)
+            boundedAdd(
+                value,
+                boundedAdd(margin_top, gridAxisOffset(
+                    vertical_free,
+                    style_value.auto_margin.top,
+                    style_value.auto_margin.bottom,
+                    0,
+                )),
+            )
         else if (bottom) |value|
             boundedSubtract(
                 boundedSubtract(containing.height, value),
-                boundedAdd(height, style_value.margin.bottom),
+                boundedAdd(height, margin_bottom),
             )
         else
-            style_value.margin.top;
+            margin_top;
         try self.computeNode(
             id,
             .{ .x = boundedAdd(parent_origin.x, x_offset), .y = boundedAdd(parent_origin.y, y_offset) },
@@ -3570,6 +3663,78 @@ test "none and absolute children have deterministic boxes" {
     try tree.compute(root, .{ .width = 100, .height = 80 });
     try std.testing.expectEqual(Layout{}, try tree.readLayout(hidden));
     try std.testing.expectEqual(Layout{ .x = 7, .y = 9, .width = 10, .height = 12 }, try tree.readLayout(absolute));
+}
+
+test "absolute opposing insets intrinsic sizes and auto margins resolve together" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 5 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 200 }, .height = .{ .length = 100 } });
+    const inset_fill = try tree.create(.{
+        .position = .absolute,
+        .left = .{ .length = 10 },
+        .right = .{ .length = 20 },
+        .top = .{ .length = 5 },
+        .bottom = .{ .length = 15 },
+    });
+    const centered = try tree.create(.{
+        .position = .absolute,
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .left = .{ .length = 10 },
+        .right = .{ .length = 10 },
+        .top = .{ .length = 5 },
+        .bottom = .{ .length = 5 },
+        .auto_margin = .{ .top = true, .right = true, .bottom = true, .left = true },
+    });
+    const intrinsic = try tree.create(.{
+        .position = .absolute,
+        .width = .max_content,
+        .height = .min_content,
+    });
+    try tree.appendChild(root, inset_fill);
+    try tree.appendChild(root, centered);
+    try tree.appendChild(root, intrinsic);
+    var probe = IntrinsicTierProbe{ .tiers = .{
+        .min = .{ .width = 10, .height = 8 },
+        .preferred = .{ .width = 30, .height = 20 },
+        .max = .{ .width = 60, .height = 40 },
+    } };
+
+    try tree.computeWithMeasureTiers(root, .{ .width = 200, .height = 100 }, measureIntrinsicTiersForTest, &probe);
+    try std.testing.expectEqual(Layout{ .x = 10, .y = 5, .width = 170, .height = 80 }, try tree.readLayout(inset_fill));
+    try std.testing.expectEqual(Layout{ .x = 90, .y = 45, .width = 20, .height = 10 }, try tree.readLayout(centered));
+    try std.testing.expectEqual(Layout{ .width = 60, .height = 8 }, try tree.readLayout(intrinsic));
+}
+
+test "overlay intrinsic sizing and auto margins share alignment space" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .overlay,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 80 },
+    });
+    const intrinsic = try tree.create(.{
+        .width = .max_content,
+        .height = .min_content,
+        .alignment = .bottom_right,
+    });
+    const centered = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .auto_margin = .{ .top = true, .right = true, .bottom = true, .left = true },
+    });
+    try tree.appendChild(root, intrinsic);
+    try tree.appendChild(root, centered);
+    var probe = IntrinsicTierProbe{ .tiers = .{
+        .min = .{ .width = 10, .height = 8 },
+        .preferred = .{ .width = 30, .height = 20 },
+        .max = .{ .width = 60, .height = 40 },
+    } };
+
+    try tree.computeWithMeasureTiers(root, .{ .width = 100, .height = 80 }, measureIntrinsicTiersForTest, &probe);
+    try std.testing.expectEqual(Layout{ .x = 40, .y = 72, .width = 60, .height = 8 }, try tree.readLayout(intrinsic));
+    try std.testing.expectEqual(Layout{ .x = 40, .y = 35, .width = 20, .height = 10 }, try tree.readLayout(centered));
 }
 
 test "stale ids and bounded capacity are explicit errors" {

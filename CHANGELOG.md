@@ -18,6 +18,10 @@ All notable changes to ZLAY are recorded here. The format follows
 
 - `computeDirty` now skips stable subtrees only while their cached layout inputs
   remain unchanged, and bounded retained-tree destruction no longer recurses.
+- Absolute children now derive auto dimensions from opposing physical insets
+  and distribute remaining positioned space through auto margins. Absolute and
+  overlay children honor intrinsic sizing tiers consistently with flex and
+  grid children.
 
 ## [0.1.0] - 2026-08-02
 
