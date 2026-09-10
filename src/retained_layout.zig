@@ -256,6 +256,8 @@ pub const Style = struct {
     flex_wrap: FlexWrap = .nowrap,
     align_items: AlignItems = .flex_start,
     align_self: AlignSelf = .auto,
+    /// Higher values win overlapping retained hit tests; ties prefer depth.
+    hit_test_priority: i32 = 0,
     /// Logical anchor used by relative children of overlay and grid parents.
     /// Horizontal start/end positions follow the parent's text direction.
     alignment: Alignment = .top_left,
@@ -600,6 +602,7 @@ pub const LayoutTree = struct {
         _ = try self.nodeConstAt(root_id);
         var result: ?NodeId = null;
         var result_depth: usize = 0;
+        var result_priority: i32 = std.math.minInt(i32);
         var slot_index: usize = 0;
         while (slot_index < self.slots.items.len) : (slot_index += 1) {
             const slot_entry = self.slots.items[slot_index];
@@ -612,9 +615,12 @@ pub const LayoutTree = struct {
                 continue;
             }
             const depth = depthFrom(self, candidate, root_id) catch continue;
-            if (result == null or depth >= result_depth) {
+            if (result == null or node.style.hit_test_priority > result_priority or
+                (node.style.hit_test_priority == result_priority and depth >= result_depth))
+            {
                 result = candidate;
                 result_depth = depth;
+                result_priority = node.style.hit_test_priority;
             }
         }
         return result;
@@ -4064,9 +4070,33 @@ test "none and absolute children have deterministic boxes" {
     });
     try tree.appendChild(root, hidden);
     try tree.appendChild(root, absolute);
+
     try tree.compute(root, .{ .width = 100, .height = 80 });
     try std.testing.expectEqual(Layout{}, try tree.readLayout(hidden));
     try std.testing.expectEqual(Layout{ .x = 7, .y = 9, .width = 10, .height = 12 }, try tree.readLayout(absolute));
+}
+test "retained hit-test priority selects overlapping sibling" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .overlay,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+    });
+    const low = try tree.create(.{
+        .width = .{ .length = 50 },
+        .height = .{ .length = 50 },
+        .hit_test_priority = 1,
+    });
+    const high = try tree.create(.{
+        .width = .{ .length = 50 },
+        .height = .{ .length = 50 },
+        .hit_test_priority = 2,
+    });
+    try tree.appendChild(root, low);
+    try tree.appendChild(root, high);
+    try tree.compute(root, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(high, (try tree.hitTest(root, .{ .x = 10, .y = 10 })).?);
 }
 
 test "absolute opposing insets intrinsic sizes and auto margins resolve together" {

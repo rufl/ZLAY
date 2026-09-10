@@ -22,6 +22,8 @@ All notable changes to ZLAY are recorded here. The format follows
   overlay containers.
 - Added allocation-free retained-node hit testing that respects computed
   ancestry clips and returns the deepest matching node.
+- Retained hit testing now supports explicit per-node priority for overlapping
+  game controls and editor targets.
 
 ### Changed
 
