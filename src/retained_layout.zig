@@ -258,6 +258,8 @@ pub const Style = struct {
     align_self: AlignSelf = .auto,
     /// Higher values win overlapping retained hit tests; ties prefer depth.
     hit_test_priority: i32 = 0,
+    /// Lower values participate earlier in layout; equal values preserve insertion order.
+    order: i32 = 0,
     /// Logical anchor used by relative children of overlay and grid parents.
     /// Horizontal start/end positions follow the parent's text direction.
     alignment: Alignment = .top_left,
@@ -760,6 +762,7 @@ pub const LayoutTree = struct {
             return;
         }
 
+        try sortChildrenByOrder(self, node_ref);
         const children = node_ref.children.items;
         const supplied_measurement = node_ref.intrinsic_measurement;
         const supplied_tiers = node_ref.intrinsic_tiers;
@@ -2862,6 +2865,21 @@ fn containsLayoutPoint(layout: Layout, point: Point) bool {
             true;
 }
 
+fn sortChildrenByOrder(self: *LayoutTree, node: *Node) Error!void {
+    var index: usize = 1;
+    while (index < node.children.items.len) : (index += 1) {
+        const key = node.children.items[index];
+        const key_order = (try self.nodeConstAt(key)).style.order;
+        var position = index;
+        while (position > 0) {
+            const previous = node.children.items[position - 1];
+            if ((try self.nodeConstAt(previous)).style.order <= key_order) break;
+            node.children.items[position] = previous;
+            position -= 1;
+        }
+        node.children.items[position] = key;
+    }
+}
 fn isDescendantOf(self: *const LayoutTree, candidate: NodeId, root: NodeId) bool {
     var current = candidate;
     var steps: usize = 0;
@@ -4097,6 +4115,22 @@ test "retained hit-test priority selects overlapping sibling" {
     try tree.appendChild(root, high);
     try tree.compute(root, .{ .width = 100, .height = 100 });
     try std.testing.expectEqual(high, (try tree.hitTest(root, .{ .x = 10, .y = 10 })).?);
+}
+
+test "retained flex order preserves stable ties" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 5 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 20 } });
+    const late = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 }, .order = 2 });
+    const first = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 }, .order = -1 });
+    const tie = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 }, .order = -1 });
+    try tree.appendChild(root, late);
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, tie);
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 0), (try tree.readLayout(first)).x);
+    try std.testing.expectEqual(@as(f32, 10), (try tree.readLayout(tie)).x);
+    try std.testing.expectEqual(@as(f32, 20), (try tree.readLayout(late)).x);
 }
 
 test "absolute opposing insets intrinsic sizes and auto margins resolve together" {

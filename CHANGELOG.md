@@ -24,6 +24,8 @@ All notable changes to ZLAY are recorded here. The format follows
   ancestry clips and returns the deepest matching node.
 - Retained hit testing now supports explicit per-node priority for overlapping
   game controls and editor targets.
+- Retained children now support stable integer `order` sorting before layout;
+  equal orders preserve insertion order.
 
 ### Changed
 
