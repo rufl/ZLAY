@@ -2,10 +2,11 @@
 //!
 //! This module intentionally implements only a bounded flex and grid subset:
 //! row and column containers, explicit fixed/fractional grid tracks,
-//! `display: none`, absolute children, auto/length/percentage dimensions,
-//! and finite pixel padding/margins. There is no text-specific measurement,
-//! wrapping, block layout, or CSS parser. An optional caller-supplied intrinsic
-//! measurement callback can provide finite dimensions for auto-sized leaf nodes.
+//! `display: none`, absolute children, auto/length/percentage/stretch
+//! dimensions, and finite pixel padding/margins. There is no text-specific
+//! measurement, wrapping, block layout, or CSS parser. An optional caller-
+//! supplied intrinsic measurement callback can provide finite dimensions for
+//! auto-sized leaf nodes.
 //! Layout is computed synchronously into caller-owned tree storage; no scratch
 //! allocation is needed by compute.
 
@@ -104,6 +105,8 @@ pub const Dimension = union(enum) {
     auto,
     length: f32,
     percent: f32,
+    /// A positive weight receiving a share of the parent's remaining space.
+    stretch: f32,
 
     pub fn lengthPx(value: f32) Dimension {
         return .{ .length = value };
@@ -111,6 +114,10 @@ pub const Dimension = union(enum) {
 
     pub fn percentOfParent(value: f32) Dimension {
         return .{ .percent = value };
+    }
+
+    pub fn stretchFactor(value: f32) Dimension {
+        return .{ .stretch = value };
     }
 };
 /// Four-sided spacing around a node. Values are finite, non-negative pixels.
@@ -528,6 +535,15 @@ pub const LayoutTree = struct {
             );
             return;
         }
+        var flow_children: usize = 0;
+        for (children) |child_id| {
+            const child_style = (try self.nodeConstAt(child_id)).style;
+            if (child_style.display != .none and child_style.position != .absolute) flow_children += 1;
+        }
+        const flex_gap_total = if (flow_children > 1)
+            style_value.flex_gap * @as(f32, @floatFromInt(flow_children - 1))
+        else
+            0;
 
         var iterations: usize = 0;
         while (iterations <= children.len) : (iterations += 1) {
@@ -541,15 +557,12 @@ pub const LayoutTree = struct {
                     unfrozen_base += child_node.flex_base;
                 }
             }
-            const free = available_main - frozen_sum - unfrozen_base;
+            const free = available_main - flex_gap_total - frozen_sum - unfrozen_base;
             var total_factor: f32 = 0;
             for (children) |child_id| {
                 const child_node = try self.nodeAt(child_id);
                 if (child_node.flex_frozen) continue;
-                total_factor += if (free >= 0)
-                    child_node.style.flex_grow
-                else
-                    child_node.style.flex_shrink * child_node.flex_base;
+                total_factor += flexMainFactor(child_node.style, style_value.flex_direction, free, child_node.flex_base);
             }
             if (total_factor == 0) {
                 for (children) |child_id| {
@@ -566,11 +579,8 @@ pub const LayoutTree = struct {
             for (children) |child_id| {
                 const child_node = try self.nodeAt(child_id);
                 if (child_node.flex_frozen) continue;
-                const factor = if (free >= 0)
-                    child_node.style.flex_grow
-                else
-                    child_node.style.flex_shrink * child_node.flex_base;
-                const raw = child_node.flex_base + free * factor / total_factor;
+                const factor = flexMainFactor(child_node.style, style_value.flex_direction, free, child_node.flex_base);
+                const raw = child_node.flex_base + weightedShare(free, factor, total_factor);
                 child_node.flex_size = clampFlexMain(raw, child_node.style, style_value.flex_direction, available_main);
                 if (child_node.flex_size != raw) {
                     child_node.flex_frozen = true;
@@ -581,11 +591,8 @@ pub const LayoutTree = struct {
                 for (children) |child_id| {
                     const child_node = try self.nodeAt(child_id);
                     if (!child_node.flex_frozen) {
-                        const factor = if (free >= 0)
-                            child_node.style.flex_grow
-                        else
-                            child_node.style.flex_shrink * child_node.flex_base;
-                        child_node.flex_size = child_node.flex_base + free * factor / total_factor;
+                        const factor = flexMainFactor(child_node.style, style_value.flex_direction, free, child_node.flex_base);
+                        child_node.flex_size = child_node.flex_base + weightedShare(free, factor, total_factor);
                         child_node.flex_frozen = true;
                     }
                 }
@@ -601,9 +608,9 @@ pub const LayoutTree = struct {
             flow_count += 1;
             occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
         }
-        const free_space = @max(boundedSubtract(available_main, occupied_main), 0);
+        const free_space = @max(boundedSubtract(available_main, boundedAdd(occupied_main, flex_gap_total)), 0);
         const justify_leading = justifyLeading(style_value.justify_content, free_space, flow_count);
-        const justify_gap = justifyGap(style_value.justify_content, free_space, flow_count);
+        const justify_gap = boundedAdd(style_value.flex_gap, justifyGap(style_value.justify_content, free_space, flow_count));
 
         var cursor: f32 = justify_leading;
         for (children) |child_id| {
@@ -858,10 +865,7 @@ pub const LayoutTree = struct {
                 const item_node = try self.nodeConstAt(child_id);
                 const item_style = item_node.style;
                 if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
-                total_factor = boundedAdd(total_factor, if (free >= 0)
-                    item_style.flex_grow
-                else
-                    item_style.flex_shrink * item_node.flex_base);
+                total_factor = boundedAdd(total_factor, flexMainFactor(item_style, direction, free, item_node.flex_base));
             }
             if (unfrozen_count == 0 or total_factor == 0) {
                 for (children[start..end]) |child_id| {
@@ -878,11 +882,8 @@ pub const LayoutTree = struct {
                 const item_node = try self.nodeAt(child_id);
                 const item_style = item_node.style;
                 if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
-                const factor = if (free >= 0)
-                    item_style.flex_grow
-                else
-                    item_style.flex_shrink * item_node.flex_base;
-                const raw = boundedAdd(item_node.flex_base, free * factor / total_factor);
+                const factor = flexMainFactor(item_style, direction, free, item_node.flex_base);
+                const raw = boundedAdd(item_node.flex_base, weightedShare(free, factor, total_factor));
                 item_node.flex_size = clampFlexMain(raw, item_style, direction, available_main);
                 if (item_node.flex_size != raw) {
                     item_node.flex_frozen = true;
@@ -894,11 +895,8 @@ pub const LayoutTree = struct {
                     const item_node = try self.nodeAt(child_id);
                     const item_style = item_node.style;
                     if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
-                    const factor = if (free >= 0)
-                        item_style.flex_grow
-                    else
-                        item_style.flex_shrink * item_node.flex_base;
-                    item_node.flex_size = boundedAdd(item_node.flex_base, free * factor / total_factor);
+                    const factor = flexMainFactor(item_style, direction, free, item_node.flex_base);
+                    item_node.flex_size = boundedAdd(item_node.flex_base, weightedShare(free, factor, total_factor));
                     item_node.flex_frozen = true;
                 }
                 break;
@@ -1293,6 +1291,18 @@ pub const LayoutTree = struct {
         const right = insetValue(style_value.right, containing.width);
         const top = insetValue(style_value.top, containing.height);
         const bottom = insetValue(style_value.bottom, containing.height);
+        if (style_value.width == .stretch) {
+            width = boundedSubtract(
+                containing.width,
+                boundedAdd(left orelse 0, right orelse 0),
+            );
+        }
+        if (style_value.height == .stretch) {
+            height = boundedSubtract(
+                containing.height,
+                boundedAdd(top orelse 0, bottom orelse 0),
+            );
+        }
         const node_ref = try self.nodeAt(id);
         node_ref.intrinsic_measurement = null;
         if (measure != null and node_ref.children.items.len == 0 and
@@ -1478,7 +1488,12 @@ fn flexBaseDimension(
     intrinsic_measurement: ?Dimensions,
 ) f32 {
     const main_dimension = if (direction == .row) style.width else style.height;
-    if (style.flex_basis != .auto) return boundedResolved(style.flex_basis, main_parent);
+    if (style.flex_basis != .auto) {
+        return switch (style.flex_basis) {
+            .stretch => 0,
+            else => boundedResolved(style.flex_basis, main_parent),
+        };
+    }
     if (style.aspect_ratio) |ratio| {
         const cross_dimension = if (direction == .row) style.height else style.width;
         if (main_dimension == .auto and cross_dimension != .auto) {
@@ -1490,7 +1505,34 @@ fn flexBaseDimension(
     if (intrinsic_measurement) |measured| {
         if (main_dimension == .auto) return if (direction == .row) measured.width else measured.height;
     }
-    return boundedResolved(main_dimension, main_parent);
+    return switch (main_dimension) {
+        .stretch => 0,
+        else => boundedResolved(main_dimension, main_parent),
+    };
+}
+
+fn flexMainDimension(style: Style, direction: FlexDirection) Dimension {
+    return if (direction == .row) style.width else style.height;
+}
+
+fn flexMainFactor(style: Style, direction: FlexDirection, free: f32, base: f32) f32 {
+    const main_dimension = if (style.flex_basis != .auto) style.flex_basis else flexMainDimension(style, direction);
+    if (free >= 0) {
+        return switch (main_dimension) {
+            .stretch => |factor| factor,
+            else => style.flex_grow,
+        };
+    }
+    return switch (main_dimension) {
+        .stretch => 0,
+        else => style.flex_shrink * base,
+    };
+}
+
+fn weightedShare(available: f32, factor: f32, total: f32) f32 {
+    if (available == 0 or factor <= 0 or total <= 0) return 0;
+    const result = (available / total) * factor;
+    return if (finite(result)) result else std.math.floatMax(f32);
 }
 
 fn effectiveGap(specific: f32, shared: f32) f32 {
@@ -1617,6 +1659,7 @@ fn validateStyle(style: Style) Error!void {
         .auto => {},
         .length => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
         .percent => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
+        .stretch => |factor| if (!finite(factor) or factor <= 0) return error.InvalidStyle,
     };
 }
 
@@ -1640,6 +1683,8 @@ fn resolveDimension(dimension: Dimension, parent: f32, auto_value: f32) f32 {
         .auto => auto_value,
         .length => |value| value,
         .percent => |value| parent * value,
+        // Outside a flex distribution pass, stretch fills the available axis.
+        .stretch => parent,
     };
 }
 
@@ -1648,6 +1693,8 @@ fn insetValue(dimension: Dimension, parent: f32) ?f32 {
         .auto => null,
         .length => |value| value,
         .percent => |value| parent * value,
+        // Stretch is a size, not an inset.
+        .stretch => null,
     };
 }
 fn clipForNode(overflow: Overflow, inherited: ?ClipRect, origin: Point, size: Dimensions) ?ClipRect {
@@ -2229,4 +2276,77 @@ test "flex wrapping rejects invalid bounded values" {
     defer tree.deinit();
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_gap = -1 }));
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_gap = std.math.inf(f32) }));
+}
+
+test "stretch dimensions divide remaining flex space by weight" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 20 } });
+    const fixed = try tree.create(.{ .width = .{ .length = 20 }, .height = .{ .length = 10 } });
+    const one = try tree.create(.{ .width = .{ .stretch = 1 }, .height = .{ .length = 10 } });
+    const three = try tree.create(.{ .width = .{ .stretch = 3 }, .height = .{ .length = 10 } });
+    try tree.appendChild(root, fixed);
+    try tree.appendChild(root, one);
+    try tree.appendChild(root, three);
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 20), (try tree.readLayout(fixed)).width);
+    try std.testing.expectEqual(@as(f32, 20), (try tree.readLayout(one)).width);
+    try std.testing.expectEqual(@as(f32, 60), (try tree.readLayout(three)).width);
+}
+
+test "stretch dimensions fill bounded grid overlay and absolute space" {
+    const columns = [_]GridTrack{.{ .fixed = 100 }};
+    const rows = [_]GridTrack{.{ .fixed = 40 }};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 12 });
+    defer tree.deinit();
+
+    const grid = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 40 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+    });
+    const grid_child = try tree.create(.{ .width = .{ .stretch = 2 }, .height = .{ .stretch = 4 } });
+    try tree.appendChild(grid, grid_child);
+    try tree.compute(grid, .{ .width = 100, .height = 40 });
+    try std.testing.expectEqual(@as(f32, 100), (try tree.readLayout(grid_child)).width);
+    try std.testing.expectEqual(@as(f32, 40), (try tree.readLayout(grid_child)).height);
+
+    const overlay = try tree.create(.{
+        .display = .overlay,
+        .width = .{ .length = 80 },
+        .height = .{ .length = 50 },
+    });
+    const overlay_child = try tree.create(.{ .width = .{ .stretch = 1 }, .height = .{ .stretch = 1 } });
+    try tree.appendChild(overlay, overlay_child);
+    try tree.compute(overlay, .{ .width = 80, .height = 50 });
+    try std.testing.expectEqual(@as(f32, 80), (try tree.readLayout(overlay_child)).width);
+    try std.testing.expectEqual(@as(f32, 50), (try tree.readLayout(overlay_child)).height);
+
+    const absolute_parent = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 60 } });
+    const absolute = try tree.create(.{
+        .position = .absolute,
+        .width = .{ .stretch = 1 },
+        .height = .{ .stretch = 1 },
+        .left = .{ .length = 7 },
+        .right = .{ .length = 13 },
+        .top = .{ .length = 5 },
+        .bottom = .{ .length = 15 },
+    });
+    try tree.appendChild(absolute_parent, absolute);
+    try tree.compute(absolute_parent, .{ .width = 100, .height = 60 });
+    try std.testing.expectEqual(
+        Layout{ .x = 7, .y = 5, .width = 80, .height = 40 },
+        try tree.readLayout(absolute),
+    );
+}
+
+test "stretch dimensions require finite positive factors" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .width = .{ .stretch = 0 } }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .height = .{ .stretch = -1 } }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_basis = .{ .stretch = std.math.nan(f32) } }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .left = .{ .stretch = std.math.inf(f32) } }));
 }
