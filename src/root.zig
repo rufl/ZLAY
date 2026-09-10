@@ -17,6 +17,7 @@ pub const profile = @import("profile.zig");
 pub const paragraph_provider = @import("paragraph_provider.zig");
 pub const animation = @import("animation.zig");
 pub const retained_layout = @import("retained_layout.zig");
+pub const interaction = @import("interaction.zig");
 pub const engine = @import("context.zig");
 
 pub const Context = engine.Context;

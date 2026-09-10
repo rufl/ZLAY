@@ -572,3 +572,12 @@ implement block flow, CSS parsing, or text measurement. The current bounded
 grid subset supports explicit fixed and fractional tracks, gaps, and one-based
 explicit or automatic child placement. Grid spans and intrinsic track sizing
 remain outside this API.
+
+## Interaction foundation
+
+`zlay.interaction.Interaction` provides caller-storage-backed focus and pointer
+state. Registering elements establishes deterministic keyboard order. Navigation
+supports wrapping or clamping, pointer capture is explicit, and `dispatch`
+returns a renderer-neutral target decision for keyboard focus, pointer capture,
+or hit-test input. Unregistering an element clears any focus or capture owned by
+it.
