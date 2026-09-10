@@ -553,25 +553,25 @@ See [PARITY.md](PARITY.md) for the required differential evidence and
 
 ## Additive animation timelines
 
-`zlay.animation` provides an opt-in, fixed-capacity timeline over
-`TransitionData`. It is separate from Clay-compatible `TransitionElementConfig`
-and does not change existing transition behavior. `Timeline.init` borrows caller
-storage; `initWithAllocator` owns one bounded keyframe buffer. Evaluation never
-allocates. Timelines support keyframes, delay, repeats, alternating direction,
-reverse playback, and custom easing callbacks. Invalid or non-finite timing
-values return errors.
+`zlay.animation` provides opt-in fixed-capacity timelines over `TransitionData`.
+It is separate from Clay-compatible `TransitionElementConfig` and does not
+change existing transition behavior. `Timeline` supports keyframes, delay,
+repeats, alternating direction, reverse playback, custom easing, cancellation,
+and deterministic completion. `VisualStateBridge` animates visual layout state
+from immutable current/target snapshots without mutating layout targets and
+settles directly to the target under reduced motion. Evaluation never allocates.
 
 ## Retained layout foundation
 
 `zlay.retained_layout.LayoutTree` is an additive Taffy-inspired retained tree.
-It currently supports generational node IDs, style mutation with dirty
-propagation, row/column flex distribution, `display: none`, absolute children
-with insets, and auto/length/percentage dimensions. It is intentionally
-separate from `Context`, has bounded node/child capacities, and does not yet
-implement block flow, CSS parsing, or text measurement. The current bounded
-grid subset supports explicit fixed and fractional tracks, gaps, and one-based
-explicit or automatic child placement. Grid spans and intrinsic track sizing
-remain outside this API.
+It supports generational node IDs, dirty propagation, row/column flex
+distribution, flex basis/grow/shrink, min/max dimensions, aspect ratios,
+`display: none`, absolute children with insets, and auto/length/percentage
+dimensions. `Overflow.clip` exposes bounded inherited clip rectangles.
+The bounded grid subset supports fixed and fractional tracks, gaps, explicit
+or automatic placement, and row/column spans. `computeWithMeasure` adds a
+caller-supplied allocation-free intrinsic measurement hook. Block flow, CSS
+parsing, and full browser layout semantics remain outside this API.
 
 ## Interaction foundation
 
