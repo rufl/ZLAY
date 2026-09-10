@@ -26,6 +26,8 @@ All notable changes to ZLAY are recorded here. The format follows
   game controls and editor targets.
 - Retained children now support stable integer `order` sorting before layout;
   equal orders preserve insertion order.
+- Equal-priority overlapping targets now follow computed visual order during
+  hit testing.
 
 ### Changed
 

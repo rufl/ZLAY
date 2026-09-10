@@ -617,9 +617,15 @@ pub const LayoutTree = struct {
                 continue;
             }
             const depth = depthFrom(self, candidate, root_id) catch continue;
-            if (result == null or node.style.hit_test_priority > result_priority or
-                (node.style.hit_test_priority == result_priority and depth >= result_depth))
-            {
+            const better = if (result == null)
+                true
+            else if (node.style.hit_test_priority != result_priority)
+                node.style.hit_test_priority > result_priority
+            else if (depth != result_depth)
+                depth > result_depth
+            else
+                isPaintedAfter(self, candidate, result.?);
+            if (better) {
                 result = candidate;
                 result_depth = depth;
                 result_priority = node.style.hit_test_priority;
@@ -2900,6 +2906,29 @@ fn depthFrom(self: *const LayoutTree, candidate: NodeId, root: NodeId) Error!usi
     }
     return error.TreeDepthExceeded;
 }
+
+fn isPaintedAfter(self: *const LayoutTree, candidate: NodeId, previous: NodeId) bool {
+    var left = candidate;
+    var right = previous;
+    var steps: usize = 0;
+    while (steps <= max_supported_tree_depth) : (steps += 1) {
+        const left_parent = (self.nodeConstAt(left) catch return false).parent orelse return false;
+        const right_parent = (self.nodeConstAt(right) catch return false).parent orelse return false;
+        if (sameId(left_parent, right_parent)) {
+            const siblings = self.nodeConstAt(left_parent) catch return false;
+            var left_index: ?usize = null;
+            var right_index: ?usize = null;
+            for (siblings.children.items, 0..) |sibling, index| {
+                if (sameId(sibling, left)) left_index = index;
+                if (sameId(sibling, right)) right_index = index;
+            }
+            return (left_index orelse return false) > (right_index orelse return false);
+        }
+        left = left_parent;
+        right = right_parent;
+    }
+    return false;
+}
 fn verticalEdges(edges: Edges) f32 {
     return boundedAdd(edges.top, edges.bottom);
 }
@@ -4105,11 +4134,13 @@ test "retained hit-test priority selects overlapping sibling" {
         .width = .{ .length = 50 },
         .height = .{ .length = 50 },
         .hit_test_priority = 1,
+        .order = 1,
     });
     const high = try tree.create(.{
         .width = .{ .length = 50 },
         .height = .{ .length = 50 },
-        .hit_test_priority = 2,
+        .hit_test_priority = 1,
+        .order = 2,
     });
     try tree.appendChild(root, low);
     try tree.appendChild(root, high);
