@@ -550,3 +550,22 @@ where pinned C closes only one. See the reviewed-divergence table in
 The current package is deliberately conservative about compatibility claims.
 See [PARITY.md](PARITY.md) for the required differential evidence and
 [ARCHITECTURE.md](ARCHITECTURE.md) for known subsystem boundaries.
+
+## Additive animation timelines
+
+`zlay.animation` provides an opt-in, fixed-capacity timeline over
+`TransitionData`. It is separate from Clay-compatible `TransitionElementConfig`
+and does not change existing transition behavior. `Timeline.init` borrows caller
+storage; `initWithAllocator` owns one bounded keyframe buffer. Evaluation never
+allocates. Timelines support keyframes, delay, repeats, alternating direction,
+reverse playback, and custom easing callbacks. Invalid or non-finite timing
+values return errors.
+
+## Retained layout foundation
+
+`zlay.retained_layout.LayoutTree` is an additive Taffy-inspired retained tree.
+It currently supports generational node IDs, style mutation with dirty
+propagation, row/column flex distribution, `display: none`, absolute children
+with insets, and auto/length/percentage dimensions. It is intentionally
+separate from `Context`, has bounded node/child capacities, and does not yet
+implement grid, block flow, CSS parsing, or text measurement.

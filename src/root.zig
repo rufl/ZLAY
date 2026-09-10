@@ -15,6 +15,8 @@ pub const debug = @import("debug.zig");
 pub const renderer = @import("renderer.zig");
 pub const profile = @import("profile.zig");
 pub const paragraph_provider = @import("paragraph_provider.zig");
+pub const animation = @import("animation.zig");
+pub const retained_layout = @import("retained_layout.zig");
 pub const engine = @import("context.zig");
 
 pub const Context = engine.Context;
