@@ -120,6 +120,26 @@ pub const Dimension = union(enum) {
         return .{ .stretch = value };
     }
 };
+/// A flex gap specification. `percent` is a fraction of the containing
+/// content axis; `stretch` receives the remaining axis space.
+pub const Gap = union(enum) {
+    fixed: f32,
+    percent: f32,
+    stretch: f32,
+
+    pub fn fixedPx(value: f32) Gap {
+        return .{ .fixed = value };
+    }
+
+    pub fn percentOfParent(value: f32) Gap {
+        return .{ .percent = value };
+    }
+
+    pub fn stretchFactor(value: f32) Gap {
+        return .{ .stretch = value };
+    }
+};
+
 /// Four-sided spacing around a node. Values are finite, non-negative pixels.
 pub const Edges = struct {
     top: f32 = 0,
@@ -167,6 +187,11 @@ pub const Style = struct {
     grid_gap: f32 = 0,
     /// Minimum spacing between flex items and between wrapped lines.
     flex_gap: f32 = 0,
+    /// Optional typed flex gap. When set, this takes precedence over `flex_gap`.
+    flex_gap_spec: ?Gap = null,
+    /// Optional lower and upper bounds for the typed flex gap.
+    min_flex_gap_spec: ?Gap = null,
+    max_flex_gap_spec: ?Gap = null,
     /// One-based explicit placement. Zero means auto-placement.
     grid_column: usize = 0,
     grid_row: usize = 0,
@@ -596,6 +621,25 @@ pub const LayoutTree = struct {
             );
             child_node.flex_size = child_node.flex_base;
         }
+        var flow_count: usize = 0;
+        var flow_base: f32 = 0;
+        for (children) |child_id| {
+            const child_style = (try self.nodeConstAt(child_id)).style;
+            if (child_style.display != .none and child_style.position != .absolute) {
+                flow_count += 1;
+                flow_base = boundedAdd(flow_base, (try self.nodeConstAt(child_id)).flex_base);
+            }
+        }
+        const flex_gap = resolveFlexGap(
+            style_value,
+            available_main,
+            flow_base,
+            flow_count,
+        );
+        const flex_gap_total = if (flow_count > 1)
+            flex_gap * @as(f32, @floatFromInt(flow_count - 1))
+        else
+            0;
         if (style_value.flex_wrap == .wrap) {
             try self.computeFlexWrap(
                 id,
@@ -604,18 +648,10 @@ pub const LayoutTree = struct {
                 effective_clip,
                 measure,
                 measure_user_data,
+                flex_gap,
             );
             return;
         }
-        var flow_children: usize = 0;
-        for (children) |child_id| {
-            const child_style = (try self.nodeConstAt(child_id)).style;
-            if (child_style.display != .none and child_style.position != .absolute) flow_children += 1;
-        }
-        const flex_gap_total = if (flow_children > 1)
-            style_value.flex_gap * @as(f32, @floatFromInt(flow_children - 1))
-        else
-            0;
 
         var iterations: usize = 0;
         while (iterations <= children.len) : (iterations += 1) {
@@ -684,17 +720,15 @@ pub const LayoutTree = struct {
             }
         }
 
-        var flow_count: usize = 0;
         var occupied_main: f32 = 0;
         for (children) |child_id| {
             const child_style = (try self.nodeConstAt(child_id)).style;
             if (child_style.display == .none or child_style.position == .absolute) continue;
-            flow_count += 1;
             occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
         }
         const free_space = @max(boundedSubtract(available_main, boundedAdd(occupied_main, flex_gap_total)), 0);
         const justify_leading = justifyLeading(style_value.justify_content, free_space, flow_count);
-        const justify_gap = boundedAdd(style_value.flex_gap, justifyGap(style_value.justify_content, free_space, flow_count));
+        const justify_gap = boundedAdd(flex_gap, justifyGap(style_value.justify_content, free_space, flow_count));
 
         var cursor: f32 = justify_leading;
         for (children) |child_id| {
@@ -798,6 +832,7 @@ pub const LayoutTree = struct {
         inherited_clip: ?ClipRect,
         measure: ?IntrinsicMeasureFunction,
         measure_user_data: ?*anyopaque,
+        gap: f32,
     ) Error!void {
         const node = try self.nodeConstAt(id);
         const style_value = node.style;
@@ -829,8 +864,8 @@ pub const LayoutTree = struct {
                 continue;
             }
 
-            const line_end = try self.flexLineEnd(children, line_start, available_main, style_value.flex_gap);
-            try self.resolveFlexLine(children, line_start, line_end, available_main, style_value.flex_gap, direction);
+            const line_end = try self.flexLineEnd(children, line_start, available_main, gap);
+            try self.resolveFlexLine(children, line_start, line_end, available_main, gap, direction);
             const line_cross = try self.flexLineCrossSize(
                 children,
                 line_start,
@@ -847,12 +882,12 @@ pub const LayoutTree = struct {
                 occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
             }
             const total_gap = if (flow_count > 1)
-                style_value.flex_gap * @as(f32, @floatFromInt(flow_count - 1))
+                gap * @as(f32, @floatFromInt(flow_count - 1))
             else
                 0;
             const free_space = @max(boundedSubtract(available_main, boundedAdd(occupied_main, total_gap)), 0);
             const justify_leading = justifyLeading(style_value.justify_content, free_space, flow_count);
-            const justify_gap = boundedAdd(style_value.flex_gap, justifyGap(style_value.justify_content, free_space, flow_count));
+            const justify_gap = boundedAdd(gap, justifyGap(style_value.justify_content, free_space, flow_count));
             var cursor = justify_leading;
             for (children[line_start..line_end]) |child_id| {
                 const item_style = try self.style(child_id);
@@ -894,7 +929,7 @@ pub const LayoutTree = struct {
                     boundedAdd(main_margin, justify_gap),
                 ));
             }
-            cross_cursor = boundedAdd(cross_cursor, boundedAdd(line_cross, style_value.flex_gap));
+            cross_cursor = boundedAdd(cross_cursor, boundedAdd(line_cross, gap));
             line_start = line_end;
         }
     }
@@ -1719,6 +1754,34 @@ fn weightedShare(available: f32, factor: f32, total: f32) f32 {
 fn effectiveGap(specific: f32, shared: f32) f32 {
     return if (specific != 0) specific else shared;
 }
+/// Resolves a typed gap once for a flex container. Stretch gaps share the
+/// remaining space equally across the gaps; the factor is reserved for
+/// future competing gap specs, since one style has only one repeated spec.
+fn resolveFlexGap(style: Style, parent: f32, occupied: f32, item_count: usize) f32 {
+    const spec = style.flex_gap_spec orelse return style.flex_gap;
+    const gap_count = item_count -| 1;
+    const remaining = @max(boundedSubtract(parent, occupied), 0);
+    var result = resolveGapValue(spec, parent, remaining, gap_count);
+    if (style.min_flex_gap_spec) |minimum| {
+        result = @max(result, resolveGapValue(minimum, parent, remaining, gap_count));
+    }
+    if (style.max_flex_gap_spec) |maximum| {
+        result = @min(result, resolveGapValue(maximum, parent, remaining, gap_count));
+    }
+    return if (finite(result)) @max(result, 0) else std.math.floatMax(f32);
+}
+
+fn resolveGapValue(spec: Gap, parent: f32, remaining: f32, gap_count: usize) f32 {
+    return switch (spec) {
+        .fixed => |value| value,
+        .percent => |value| boundedCoordinate(parent * value),
+        .stretch => |factor| blk: {
+            _ = factor;
+            if (gap_count == 0) break :blk 0;
+            break :blk boundedCoordinate(remaining / @as(f32, @floatFromInt(gap_count)));
+        },
+    };
+}
 
 fn gridTrackDimension(tracks: []const GridTrack, index: usize, available: f32, gap: f32) f32 {
     const total_gap = gap * @as(f32, @floatFromInt(tracks.len - 1));
@@ -1793,10 +1856,19 @@ fn validateEdges(edges: Edges) Error!void {
         return error.InvalidStyle;
     }
 }
+fn validateGapSpec(spec: ?Gap) Error!void {
+    if (spec) |gap| switch (gap) {
+        .fixed, .percent => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
+        .stretch => |factor| if (!finite(factor) or factor <= 0) return error.InvalidStyle,
+    };
+}
 
 fn validateStyle(style: Style) Error!void {
     try validateEdges(style.padding);
     try validateEdges(style.margin);
+    try validateGapSpec(style.flex_gap_spec);
+    try validateGapSpec(style.min_flex_gap_spec);
+    try validateGapSpec(style.max_flex_gap_spec);
     if (@intFromEnum(style.flex_wrap) >= 2 or
         @intFromEnum(style.align_items) >= 4 or
         @intFromEnum(style.align_self) >= 5 or
@@ -2548,6 +2620,49 @@ test "flex justification distributes positive main-axis free space" {
     try tree.compute(root, .{ .width = 100, .height = 20 });
     try std.testing.expectEqual(@as(f32, 35), (try tree.readLayout(first)).x);
     try std.testing.expectEqual(@as(f32, 45), (try tree.readLayout(second)).x);
+}
+
+test "typed flex gaps resolve percentages, stretch, and bounds" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+        .flex_gap_spec = Gap.percentOfParent(0.1),
+    });
+    const first = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 } });
+    const second = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 20), (try tree.readLayout(second)).x);
+
+    try tree.setStyle(root, .{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+        .flex_gap_spec = Gap.stretchFactor(1),
+    });
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 90), (try tree.readLayout(second)).x);
+
+    try tree.setStyle(root, .{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+        .flex_gap_spec = Gap.percentOfParent(0.1),
+        .min_flex_gap_spec = Gap.fixedPx(25),
+        .max_flex_gap_spec = Gap.fixedPx(30),
+    });
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 35), (try tree.readLayout(second)).x);
+}
+
+test "typed flex gaps reject invalid values" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_gap_spec = Gap.fixedPx(-1) }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_gap_spec = Gap.percentOfParent(std.math.inf(f32)) }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .min_flex_gap_spec = Gap.percentOfParent(-0.1) }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .max_flex_gap_spec = Gap.stretchFactor(0) }));
 }
 test "wrapped row forms bounded lines and places cross axis" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
