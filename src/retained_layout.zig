@@ -95,11 +95,17 @@ fn aspectRatioDimension(width: f32, height: f32, ratio: f32, width_auto: bool, h
 
 /// One explicit grid track. `fixed` is pixels; `auto` uses bounded intrinsic
 /// child dimensions when available; `fr` receives a share of the space left
-/// after fixed/auto tracks and gaps.
+/// after fixed/auto tracks and gaps; `minmax` is a unit-weight flexible track
+/// clamped to its finite bounds.
+pub const GridTrackBounds = struct {
+    min: f32,
+    max: f32,
+};
 pub const GridTrack = union(enum) {
     fixed: f32,
     auto,
     fr: f32,
+    bounded: GridTrackBounds,
 
     pub fn fixedPx(value: f32) GridTrack {
         return .{ .fixed = value };
@@ -111,6 +117,15 @@ pub const GridTrack = union(enum) {
 
     pub fn fractional(value: f32) GridTrack {
         return .{ .fr = value };
+    }
+
+    /// Creates a unit-weight flexible track with an inclusive finite range.
+    /// Invalid bounds are rejected before a track can be used in a Style.
+    pub fn minmax(minimum: f32, maximum: f32) Error!GridTrack {
+        if (!finite(minimum) or !finite(maximum) or minimum < 0 or maximum < minimum) {
+            return error.InvalidStyle;
+        }
+        return .{ .bounded = .{ .min = minimum, .max = maximum } };
     }
 };
 pub const Dimension = union(enum) {
@@ -1505,6 +1520,7 @@ pub const LayoutTree = struct {
         var fixed: f32 = 0;
         var auto: f32 = 0;
         var fractions: f32 = 0;
+        var bounded_count: f32 = 0;
         for (tracks, 0..) |track, track_index| {
             switch (track) {
                 .fixed => |value| fixed = boundedAdd(fixed, value),
@@ -1517,16 +1533,75 @@ pub const LayoutTree = struct {
                     horizontal,
                 )),
                 .fr => |value| fractions = boundedAdd(fractions, value),
+                .bounded => bounded_count += 1,
             }
         }
+        const remaining = @max(boundedSubtract(usable, boundedAdd(fixed, auto)), 0);
+        if (bounded_count == 0) {
+            return switch (tracks[index]) {
+                .fixed => |value| value,
+                .auto => try self.gridTrackAutoSize(tracks, index, available, gap, children, horizontal),
+                .fr => |value| weightedShare(remaining, value, fractions),
+                .bounded => unreachable,
+            };
+        }
+
+        // Grid track counts are bounded by Options; this fixed scratch keeps
+        // resolution allocation-free while allowing custom capacities well
+        // beyond the default.
+        var frozen: [256]bool = [_]bool{false} ** 256;
+        var newly_frozen: [256]bool = [_]bool{false} ** 256;
+        var frozen_values: [256]f32 = undefined;
+        var frozen_sum: f32 = 0;
+        var active_weight = boundedAdd(fractions, bounded_count);
+        var iteration: usize = 0;
+        while (iteration < tracks.len) : (iteration += 1) {
+            const free = @max(boundedSubtract(remaining, frozen_sum), 0);
+            var froze_any = false;
+            for (tracks, 0..) |track, track_index| {
+                if (frozen[track_index]) continue;
+                switch (track) {
+                    .bounded => |bounds| {
+                        const share = weightedShare(free, 1, active_weight);
+                        if (share < bounds.min) {
+                            newly_frozen[track_index] = true;
+                            frozen_values[track_index] = bounds.min;
+                            froze_any = true;
+                        } else if (share > bounds.max) {
+                            newly_frozen[track_index] = true;
+                            frozen_values[track_index] = bounds.max;
+                            froze_any = true;
+                        }
+                    },
+                    else => {},
+                }
+            }
+            if (!froze_any) break;
+            for (tracks, 0..) |_, track_index| {
+                if (!newly_frozen[track_index]) continue;
+                newly_frozen[track_index] = false;
+                frozen[track_index] = true;
+                frozen_sum = boundedAdd(frozen_sum, frozen_values[track_index]);
+                active_weight = boundedSubtract(active_weight, 1);
+            }
+        }
+
         return switch (tracks[index]) {
             .fixed => |value| value,
             .auto => try self.gridTrackAutoSize(tracks, index, available, gap, children, horizontal),
             .fr => |value| weightedShare(
-                boundedSubtract(usable, boundedAdd(fixed, auto)),
+                @max(boundedSubtract(remaining, frozen_sum), 0),
                 value,
-                fractions,
+                active_weight,
             ),
+            .bounded => |bounds| if (frozen[index])
+                frozen_values[index]
+            else
+                @min(@max(weightedShare(
+                    @max(boundedSubtract(remaining, frozen_sum), 0),
+                    1,
+                    active_weight,
+                ), bounds.min), bounds.max),
         };
     }
 
@@ -1558,6 +1633,7 @@ pub const LayoutTree = struct {
             for (0..span) |offset| {
                 switch (tracks[start + offset]) {
                     .fixed => |value| fixed_span = boundedAdd(fixed_span, value),
+                    .bounded => |bounds| fixed_span = boundedAdd(fixed_span, bounds.min),
                     .auto => auto_count += 1,
                     .fr => {},
                 }
@@ -1576,7 +1652,6 @@ pub const LayoutTree = struct {
         }
         return boundedCoordinate(result);
     }
-
     fn gridTrackSpanDimension(
         self: *const LayoutTree,
         tracks: []const GridTrack,
@@ -2075,11 +2150,13 @@ fn validateStyle(style: Style) Error!void {
         .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
         .auto => {},
         .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
+        .bounded => |bounds| if (!finite(bounds.min) or !finite(bounds.max) or bounds.min < 0 or bounds.max < bounds.min) return error.InvalidStyle,
     };
     for (style.grid_rows) |track| switch (track) {
         .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
         .auto => {},
         .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
+        .bounded => |bounds| if (!finite(bounds.min) or !finite(bounds.max) or bounds.min < 0 or bounds.max < bounds.min) return error.InvalidStyle,
     };
     if ((style.grid_column == 0) != (style.grid_row == 0)) return error.InvalidStyle;
     const dimensions = [_]Dimension{
@@ -2557,6 +2634,54 @@ test "grid rejects invalid tracks and bounded track capacity" {
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one, .grid_rows = &[_]GridTrack{.{ .fr = 0 }} }));
     try std.testing.expectError(error.GridTrackCapacityExceeded, tree.create(.{ .display = .grid, .grid_columns = &two, .grid_rows = &one }));
 }
+test "grid minmax clamps bounds and redistributes fractional space" {
+    const bounded = try GridTrack.minmax(80, 100);
+    const columns = [_]GridTrack{ bounded, .{ .fr = 1 } };
+    const rows = [_]GridTrack{.{ .fixed = 10 }};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 10 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+    });
+    const first = try tree.create(.{ .grid_column = 1, .grid_row = 1, .width = .{ .stretch = 1 } });
+    const second = try tree.create(.{ .grid_column = 2, .grid_row = 1, .width = .{ .stretch = 1 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.compute(root, .{ .width = 100, .height = 10 });
+    try std.testing.expectEqual(@as(f32, 80), (try tree.readLayout(first)).width);
+    try std.testing.expectEqual(@as(f32, 20), (try tree.readLayout(second)).width);
+
+    try tree.setStyle(root, .{
+        .display = .grid,
+        .width = .{ .length = 220 },
+        .height = .{ .length = 10 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+    });
+    try tree.compute(root, .{ .width = 220, .height = 10 });
+    try std.testing.expectEqual(@as(f32, 100), (try tree.readLayout(first)).width);
+    try std.testing.expectEqual(@as(f32, 120), (try tree.readLayout(second)).width);
+}
+
+test "grid minmax rejects invalid finite bounds and ordering" {
+    try std.testing.expectError(error.InvalidStyle, GridTrack.minmax(20, 10));
+    try std.testing.expectError(error.InvalidStyle, GridTrack.minmax(-1, 10));
+    try std.testing.expectError(error.InvalidStyle, GridTrack.minmax(0, std.math.inf(f32)));
+    const invalid = [_]GridTrack{.{ .bounded = .{ .min = 30, .max = 20 } }};
+    const rows = [_]GridTrack{.{ .fixed = 10 }};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{
+        .display = .grid,
+        .grid_columns = &invalid,
+        .grid_rows = &rows,
+    }));
+}
+
 test "flex basis distributes growth and explicit shrink without negatives" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
     defer tree.deinit();
