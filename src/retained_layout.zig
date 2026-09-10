@@ -34,7 +34,7 @@ pub const NodeId = struct {
 
 pub const Display = enum { flex, grid, none, overlay };
 pub const Position = enum { relative, absolute };
-pub const FlexDirection = enum { row, column };
+pub const FlexDirection = enum { row, row_reverse, column, column_reverse };
 pub const Direction = enum { ltr, rtl };
 pub const FlexWrap = enum { nowrap, wrap, wrap_reverse };
 /// Sparse or hole-backfilling dense automatic placement by row or column.
@@ -75,6 +75,19 @@ fn alignmentFractions(alignment: Alignment) struct { x: f32, y: f32 } {
 fn alignmentHorizontalFraction(alignment: Alignment, direction: Direction) f32 {
     const fraction = alignmentFractions(alignment).x;
     return if (direction == .rtl) 1 - fraction else fraction;
+}
+
+fn flexIsRow(direction: FlexDirection) bool {
+    return direction == .row or direction == .row_reverse;
+}
+
+fn flexIsReverse(direction: FlexDirection) bool {
+    return direction == .row_reverse or direction == .column_reverse;
+}
+
+fn effectiveRowDirection(direction: FlexDirection, text_direction: Direction) Direction {
+    if (!flexIsReverse(direction)) return text_direction;
+    return if (text_direction == .ltr) .rtl else .ltr;
 }
 
 fn gridFlowIsRow(flow: GridAutoFlow) bool {
@@ -170,8 +183,9 @@ pub const Dimension = union(enum) {
         return .{ .stretch = value };
     }
 };
-/// A flex gap specification. `percent` is a fraction of the containing
-/// content axis; `stretch` receives the remaining axis space.
+/// A flex gap specification. `fixed` accepts finite negative overlap;
+/// `percent` is a non-negative fraction of the containing content axis;
+/// `stretch` receives the remaining axis space.
 pub const Gap = union(enum) {
     fixed: f32,
     percent: f32,
@@ -198,6 +212,32 @@ pub const Edges = struct {
     left: f32 = 0,
 
     pub fn all(value: f32) Edges {
+        return .{ .top = value, .right = value, .bottom = value, .left = value };
+    }
+};
+
+/// A responsive edge length. Percentages are fractions of the containing axis.
+pub const EdgeSize = union(enum) {
+    fixed: f32,
+    percent: f32,
+
+    pub fn fixedPx(value: f32) EdgeSize {
+        return .{ .fixed = value };
+    }
+
+    pub fn percentOfParent(value: f32) EdgeSize {
+        return .{ .percent = value };
+    }
+};
+
+/// Optional per-edge overrides for the fixed `padding` or `margin` fallback.
+pub const ResponsiveEdges = struct {
+    top: ?EdgeSize = null,
+    right: ?EdgeSize = null,
+    bottom: ?EdgeSize = null,
+    left: ?EdgeSize = null,
+
+    pub fn all(value: EdgeSize) ResponsiveEdges {
         return .{ .top = value, .right = value, .bottom = value, .left = value };
     }
 };
@@ -233,6 +273,9 @@ pub const Style = struct {
     bottom: Dimension = .auto,
     padding: Edges = .{},
     margin: Edges = .{},
+    /// Responsive edge overrides resolved against the containing width/height.
+    padding_spec: ?ResponsiveEdges = null,
+    margin_spec: ?ResponsiveEdges = null,
     auto_margin: AutoEdges = .{},
     /// Baseline offset from the node's top edge. Null uses its bottom edge.
     baseline: ?f32 = null,
@@ -657,10 +700,15 @@ pub const LayoutTree = struct {
     ) Error!void {
         try self.validateComputeDepth(id);
         const node_ref = try self.nodeAt(id);
+        const style_value = resolvedSpacingStyle(node_ref.style, containing);
+        const positioned_origin = if (!is_root and style_value.position == .relative)
+            relativePositionOrigin(origin, style_value, containing)
+        else
+            origin;
         if (self.incremental and
             !node_ref.dirty and
             node_ref.has_computed_layout and
-            std.meta.eql(node_ref.last_origin, origin) and
+            std.meta.eql(node_ref.last_origin, positioned_origin) and
             std.meta.eql(node_ref.last_containing, containing) and
             std.meta.eql(node_ref.last_forced_size, forced_size) and
             node_ref.last_is_root == is_root and
@@ -669,12 +717,11 @@ pub const LayoutTree = struct {
             return;
         }
         node_ref.has_computed_layout = true;
-        node_ref.last_origin = origin;
+        node_ref.last_origin = positioned_origin;
         node_ref.last_containing = containing;
         node_ref.last_forced_size = forced_size;
         node_ref.last_is_root = is_root;
         node_ref.last_inherited_clip = inherited_clip;
-        const style_value = node_ref.style;
         if (style_value.display == .none) {
             try self.hideNode(id);
             return;
@@ -748,10 +795,10 @@ pub const LayoutTree = struct {
             false,
         );
 
-        const effective_clip = clipForNode(style_value.overflow, inherited_clip, origin, size);
+        const effective_clip = clipForNode(style_value.overflow, inherited_clip, positioned_origin, size);
         node_ref.layout = .{
-            .x = origin.x,
-            .y = origin.y,
+            .x = positioned_origin.x,
+            .y = positioned_origin.y,
             .width = size.width,
             .height = size.height,
             .clip = effective_clip,
@@ -760,8 +807,8 @@ pub const LayoutTree = struct {
         if (children.len == 0) return;
 
         const content_origin = Point{
-            .x = boundedAdd(origin.x, style_value.padding.left),
-            .y = boundedAdd(origin.y, style_value.padding.top),
+            .x = boundedAdd(positioned_origin.x, style_value.padding.left),
+            .y = boundedAdd(positioned_origin.y, style_value.padding.top),
         };
         const content_size = Dimensions{
             .width = @max(size.width - horizontalEdges(style_value.padding), 0),
@@ -777,10 +824,10 @@ pub const LayoutTree = struct {
             return;
         }
 
-        const available_main = if (style_value.flex_direction == .row) content_size.width else content_size.height;
+        const available_main = if (flexIsRow(style_value.flex_direction)) content_size.width else content_size.height;
         for (children) |child_id| {
             const child_node = try self.nodeAt(child_id);
-            const child_style = child_node.style;
+            const child_style = resolvedSpacingStyle(child_node.style, content_size);
             child_node.flex_frozen = child_style.display == .none or child_style.position == .absolute;
             if (!child_node.flex_frozen and
                 (needsIntrinsicMeasurement(child_style.width) or needsIntrinsicMeasurement(child_style.height)))
@@ -804,7 +851,7 @@ pub const LayoutTree = struct {
                     child_style,
                     style_value.flex_direction,
                     available_main,
-                    if (style_value.flex_direction == .row) content_size.height else content_size.width,
+                    if (flexIsRow(style_value.flex_direction)) content_size.height else content_size.width,
                     child_node.intrinsic_measurement,
                     child_node.intrinsic_tiers,
                 ),
@@ -815,7 +862,7 @@ pub const LayoutTree = struct {
         var flow_count: usize = 0;
         var flow_base: f32 = 0;
         for (children) |child_id| {
-            const child_style = (try self.nodeConstAt(child_id)).style;
+            const child_style = resolvedSpacingStyle((try self.nodeConstAt(child_id)).style, content_size);
             if (child_style.display != .none and child_style.position != .absolute) {
                 flow_count += 1;
                 flow_base = boundedAdd(flow_base, (try self.nodeConstAt(child_id)).flex_base);
@@ -914,7 +961,7 @@ pub const LayoutTree = struct {
         var occupied_main: f32 = 0;
         var auto_margin_count: usize = 0;
         for (children) |child_id| {
-            const child_style = (try self.nodeConstAt(child_id)).style;
+            const child_style = resolvedSpacingStyle((try self.nodeConstAt(child_id)).style, content_size);
             if (child_style.display == .none or child_style.position == .absolute) continue;
             occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
             auto_margin_count += autoMainMarginCount(child_style, style_value.flex_direction);
@@ -934,17 +981,17 @@ pub const LayoutTree = struct {
         );
 
         var cursor: f32 = justify_leading;
-        const cross_available = if (style_value.flex_direction == .row) content_size.height else content_size.width;
+        const cross_available = if (flexIsRow(style_value.flex_direction)) content_size.height else content_size.width;
         const line_baseline = try self.flexLineBaseline(
             children,
             0,
             children.len,
-            cross_available,
+            content_size,
             style_value.flex_direction,
             style_value.align_items,
         );
         for (children) |child_id| {
-            const child_style = try self.style(child_id);
+            const child_style = resolvedSpacingStyle(try self.style(child_id), content_size);
             if (child_style.display == .none) {
                 try self.hideNode(child_id);
                 continue;
@@ -967,7 +1014,7 @@ pub const LayoutTree = struct {
             const child_align = resolveAlign(child_style.align_self, style_value.align_items);
             var child_width = resolveDimension(child_style.width, content_size.width, 0);
             var child_height = resolveDimension(child_style.height, content_size.height, 0);
-            if (style_value.flex_direction == .row) {
+            if (flexIsRow(style_value.flex_direction)) {
                 child_width = boundedSubtract(child_node.flex_size, box_main_margin);
                 if (child_style.height == .auto) {
                     child_height = if (child_align == .stretch)
@@ -1016,7 +1063,7 @@ pub const LayoutTree = struct {
                 child_style.height == .auto,
                 false,
             );
-            const cross_size = if (style_value.flex_direction == .row) child_height else child_width;
+            const cross_size = if (flexIsRow(style_value.flex_direction)) child_height else child_width;
             const cross_offset = crossAxisOffset(
                 child_align,
                 cross_available,
@@ -1025,7 +1072,7 @@ pub const LayoutTree = struct {
                 style_value.flex_direction,
                 line_baseline,
             );
-            const child_origin = if (style_value.flex_direction == .row)
+            const child_origin = if (flexIsRow(style_value.flex_direction))
                 Point{
                     .x = rowChildX(
                         content_origin.x,
@@ -1033,14 +1080,21 @@ pub const LayoutTree = struct {
                         cursor,
                         child_width,
                         resolved_margin,
-                        style_value.direction,
+                        effectiveRowDirection(style_value.flex_direction, style_value.direction),
                     ),
                     .y = boundedAdd(content_origin.y, cross_offset),
                 }
             else
                 Point{
                     .x = boundedAdd(content_origin.x, cross_offset),
-                    .y = boundedAdd(boundedAdd(content_origin.y, cursor), resolved_margin.top),
+                    .y = columnChildY(
+                        content_origin.y,
+                        content_size.height,
+                        cursor,
+                        child_height,
+                        resolved_margin,
+                        flexIsReverse(style_value.flex_direction),
+                    ),
                 };
             try self.computeNode(
                 child_id,
@@ -1054,7 +1108,7 @@ pub const LayoutTree = struct {
             );
             const child_layout = try self.readLayout(child_id);
             cursor = boundedAdd(cursor, boundedAdd(
-                if (style_value.flex_direction == .row) child_layout.width else child_layout.height,
+                if (flexIsRow(style_value.flex_direction)) child_layout.width else child_layout.height,
                 boundedAdd(resolved_main_margin, justify_gap),
             ));
         }
@@ -1073,23 +1127,23 @@ pub const LayoutTree = struct {
         const style_value = node.style;
         const children = node.children.items;
         const direction = style_value.flex_direction;
-        const available_main = if (direction == .row) content_size.width else content_size.height;
-        const cross_parent = if (direction == .row) content_size.height else content_size.width;
+        const available_main = if (flexIsRow(direction)) content_size.width else content_size.height;
+        const cross_parent = if (flexIsRow(direction)) content_size.height else content_size.width;
         var line_start: usize = 0;
         var line_count: usize = 0;
         var occupied_cross: f32 = 0;
         var scan_start: usize = 0;
         while (scan_start < children.len) {
-            const scan_style = (try self.nodeConstAt(children[scan_start])).style;
+            const scan_style = resolvedSpacingStyle((try self.nodeConstAt(children[scan_start])).style, content_size);
             if (scan_style.display == .none or scan_style.position == .absolute) {
                 scan_start += 1;
                 continue;
             }
             const scan_end = try self.flexLineEnd(children, scan_start, available_main, gap);
-            try self.resolveFlexLine(children, scan_start, scan_end, available_main, gap, direction);
+            try self.resolveFlexLine(children, scan_start, scan_end, available_main, gap, direction, content_size);
             occupied_cross = boundedAdd(
                 occupied_cross,
-                try self.flexLineCrossSize(children, scan_start, scan_end, cross_parent, direction, style_value.align_items),
+                try self.flexLineCrossSize(children, scan_start, scan_end, content_size, direction, style_value.align_items),
             );
             line_count += 1;
             scan_start = scan_end;
@@ -1116,7 +1170,7 @@ pub const LayoutTree = struct {
             0;
 
         while (line_start < children.len) {
-            const child_style = (try self.nodeConstAt(children[line_start])).style;
+            const child_style = resolvedSpacingStyle((try self.nodeConstAt(children[line_start])).style, content_size);
             if (child_style.display == .none) {
                 try self.hideNode(children[line_start]);
                 line_start += 1;
@@ -1137,12 +1191,12 @@ pub const LayoutTree = struct {
             }
 
             const line_end = try self.flexLineEnd(children, line_start, available_main, gap);
-            try self.resolveFlexLine(children, line_start, line_end, available_main, gap, direction);
+            try self.resolveFlexLine(children, line_start, line_end, available_main, gap, direction, content_size);
             var line_cross = try self.flexLineCrossSize(
                 children,
                 line_start,
                 line_end,
-                cross_parent,
+                content_size,
                 direction,
                 style_value.align_items,
             );
@@ -1151,7 +1205,7 @@ pub const LayoutTree = struct {
             var occupied_main: f32 = 0;
             var line_auto_margin_count: usize = 0;
             for (children[line_start..line_end]) |child_id| {
-                const item_style = (try self.nodeConstAt(child_id)).style;
+                const item_style = resolvedSpacingStyle((try self.nodeConstAt(child_id)).style, content_size);
                 if (item_style.display == .none or item_style.position == .absolute) continue;
                 flow_count += 1;
                 occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
@@ -1178,7 +1232,7 @@ pub const LayoutTree = struct {
                 children,
                 line_start,
                 line_end,
-                cross_parent,
+                content_size,
                 direction,
                 style_value.align_items,
             );
@@ -1188,7 +1242,7 @@ pub const LayoutTree = struct {
                 cross_cursor;
             var cursor = justify_leading;
             for (children[line_start..line_end]) |child_id| {
-                const item_style = try self.style(child_id);
+                const item_style = resolvedSpacingStyle(try self.style(child_id), content_size);
                 if (item_style.display == .none) {
                     try self.hideNode(child_id);
                     continue;
@@ -1212,7 +1266,7 @@ pub const LayoutTree = struct {
                     content_size,
                     inherited_clip,
                     direction,
-                    style_value.direction,
+                    effectiveRowDirection(direction, style_value.direction),
                     line_cross_origin,
                     line_cross,
                     cursor,
@@ -1226,7 +1280,7 @@ pub const LayoutTree = struct {
                 const main_margin = mainMargin(item_style, direction) +
                     @as(f32, @floatFromInt(autoMainMarginCount(item_style, direction))) * line_auto_margin_share;
                 cursor = boundedAdd(cursor, boundedAdd(
-                    if (direction == .row) child_layout.width else child_layout.height,
+                    if (flexIsRow(direction)) child_layout.width else child_layout.height,
                     boundedAdd(main_margin, justify_gap),
                 ));
             }
@@ -1265,10 +1319,11 @@ pub const LayoutTree = struct {
         available_main: f32,
         gap: f32,
         direction: FlexDirection,
+        containing: Dimensions,
     ) Error!void {
         var flow_count: usize = 0;
         for (children[start..end]) |child_id| {
-            const item_style = (try self.nodeConstAt(child_id)).style;
+            const item_style = resolvedSpacingStyle((try self.nodeConstAt(child_id)).style, containing);
             if (item_style.display == .none or item_style.position == .absolute) continue;
             const item_node = try self.nodeAt(child_id);
             item_node.flex_frozen = false;
@@ -1282,7 +1337,7 @@ pub const LayoutTree = struct {
             var unfrozen_count: usize = 0;
             for (children[start..end]) |child_id| {
                 const item_node = try self.nodeConstAt(child_id);
-                const item_style = item_node.style;
+                const item_style = resolvedSpacingStyle(item_node.style, containing);
                 if (item_style.display == .none or item_style.position == .absolute) continue;
                 if (item_node.flex_frozen) {
                     frozen_sum = boundedAdd(frozen_sum, item_node.flex_size);
@@ -1299,14 +1354,14 @@ pub const LayoutTree = struct {
             var total_factor: f32 = 0;
             for (children[start..end]) |child_id| {
                 const item_node = try self.nodeConstAt(child_id);
-                const item_style = item_node.style;
+                const item_style = resolvedSpacingStyle(item_node.style, containing);
                 if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
                 total_factor = boundedAdd(total_factor, flexMainFactor(item_style, direction, free, item_node.flex_base));
             }
             if (unfrozen_count == 0 or total_factor == 0) {
                 for (children[start..end]) |child_id| {
                     const item_node = try self.nodeAt(child_id);
-                    const item_style = item_node.style;
+                    const item_style = resolvedSpacingStyle(item_node.style, containing);
                     if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
                     item_node.flex_size = clampFlexMain(
                         item_node.flex_base,
@@ -1322,7 +1377,7 @@ pub const LayoutTree = struct {
             var froze_any = false;
             for (children[start..end]) |child_id| {
                 const item_node = try self.nodeAt(child_id);
-                const item_style = item_node.style;
+                const item_style = resolvedSpacingStyle(item_node.style, containing);
                 if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
                 const factor = flexMainFactor(item_style, direction, free, item_node.flex_base);
                 const raw = boundedAdd(item_node.flex_base, weightedShare(free, factor, total_factor));
@@ -1341,7 +1396,7 @@ pub const LayoutTree = struct {
             if (!froze_any) {
                 for (children[start..end]) |child_id| {
                     const item_node = try self.nodeAt(child_id);
-                    const item_style = item_node.style;
+                    const item_style = resolvedSpacingStyle(item_node.style, containing);
                     if (item_style.display == .none or item_style.position == .absolute or item_node.flex_frozen) continue;
                     const factor = flexMainFactor(item_style, direction, free, item_node.flex_base);
                     item_node.flex_size = boundedAdd(item_node.flex_base, weightedShare(free, factor, total_factor));
@@ -1357,35 +1412,36 @@ pub const LayoutTree = struct {
         children: []const NodeId,
         start: usize,
         end: usize,
-        cross_parent: f32,
+        containing: Dimensions,
         direction: FlexDirection,
         container_align: AlignItems,
     ) Error!f32 {
+        const cross_parent = if (flexIsRow(direction)) containing.height else containing.width;
         var result: f32 = 0;
         var line_baseline: f32 = 0;
         var line_descent: f32 = 0;
         for (children[start..end]) |child_id| {
             const item_node = try self.nodeConstAt(child_id);
-            const item_style = item_node.style;
+            const item_style = resolvedSpacingStyle(item_node.style, containing);
             if (item_style.display == .none or item_style.position == .absolute) continue;
             const measurement = item_node.intrinsic_measurement;
-            const dimension = if (direction == .row) item_style.height else item_style.width;
+            const dimension = if (flexIsRow(direction)) item_style.height else item_style.width;
             var cross_size = resolveDimension(dimension, cross_parent, 0);
             if (dimension == .auto) {
                 if (measurement) |measured| {
-                    cross_size = if (direction == .row) measured.height else measured.width;
+                    cross_size = if (flexIsRow(direction)) measured.height else measured.width;
                 }
             }
             cross_size = clampDimensionWithIntrinsic(
                 cross_size,
-                if (direction == .row) item_style.min_height else item_style.min_width,
-                if (direction == .row) item_style.max_height else item_style.max_width,
+                if (flexIsRow(direction)) item_style.min_height else item_style.min_width,
+                if (flexIsRow(direction)) item_style.max_height else item_style.max_width,
                 cross_parent,
                 item_node.intrinsic_tiers,
                 dimension == .auto,
-                direction != .row,
+                !flexIsRow(direction),
             );
-            if (direction == .row and resolveAlign(item_style.align_self, container_align) == .baseline) {
+            if (flexIsRow(direction) and resolveAlign(item_style.align_self, container_align) == .baseline) {
                 const before = if (item_style.auto_margin.top) 0 else item_style.margin.top;
                 const after = if (item_style.auto_margin.bottom) 0 else item_style.margin.bottom;
                 const item_baseline = baselineOffset(item_style, cross_size);
@@ -1403,16 +1459,17 @@ pub const LayoutTree = struct {
         children: []const NodeId,
         start: usize,
         end: usize,
-        cross_parent: f32,
+        containing: Dimensions,
         direction: FlexDirection,
         container_align: AlignItems,
     ) Error!?f32 {
-        if (direction != .row) return null;
+        const cross_parent = containing.height;
+        if (!flexIsRow(direction)) return null;
         var found = false;
         var result: f32 = 0;
         for (children[start..end]) |child_id| {
             const item_node = try self.nodeConstAt(child_id);
-            const item_style = item_node.style;
+            const item_style = resolvedSpacingStyle(item_node.style, containing);
             if (item_style.display == .none or item_style.position == .absolute or
                 resolveAlign(item_style.align_self, container_align) != .baseline)
             {
@@ -1463,7 +1520,7 @@ pub const LayoutTree = struct {
         const child_align = resolveAlign(child_style.align_self, container_align);
         var child_width = resolveDimension(child_style.width, content_size.width, 0);
         var child_height = resolveDimension(child_style.height, content_size.height, 0);
-        if (direction == .row) {
+        if (flexIsRow(direction)) {
             child_width = boundedSubtract(child_node.flex_size, main_margin);
             if (child_style.height == .auto) {
                 child_height = if (child_align == .stretch)
@@ -1512,7 +1569,7 @@ pub const LayoutTree = struct {
             child_style.height == .auto,
             false,
         );
-        const cross_size = if (direction == .row) child_height else child_width;
+        const cross_size = if (flexIsRow(direction)) child_height else child_width;
         const cross_offset = crossAxisOffset(
             child_align,
             line_cross,
@@ -1521,7 +1578,7 @@ pub const LayoutTree = struct {
             direction,
             line_baseline,
         );
-        const child_origin = if (direction == .row)
+        const child_origin = if (flexIsRow(direction))
             Point{
                 .x = rowChildX(
                     content_origin.x,
@@ -1536,7 +1593,14 @@ pub const LayoutTree = struct {
         else
             Point{
                 .x = boundedAdd(boundedAdd(content_origin.x, cross_cursor), cross_offset),
-                .y = boundedAdd(boundedAdd(content_origin.y, cursor), resolved_margin.top),
+                .y = columnChildY(
+                    content_origin.y,
+                    content_size.height,
+                    cursor,
+                    child_height,
+                    resolved_margin,
+                    flexIsReverse(direction),
+                ),
             };
         try self.computeNode(
             child_id,
@@ -1563,7 +1627,7 @@ pub const LayoutTree = struct {
         const children = (try self.nodeConstAt(id)).children.items;
         const direction = node_style.direction;
         for (children) |child_id| {
-            const child_style = try self.style(child_id);
+            const child_style = resolvedSpacingStyle(try self.style(child_id), size);
             if (child_style.display == .none) {
                 try self.hideNode(child_id);
                 continue;
@@ -1868,7 +1932,7 @@ pub const LayoutTree = struct {
         // Measure after placement so auto tracks can use all available
         // intrinsic contributions, including children auto-placed later.
         for (children) |child_id| {
-            const child_style = try self.style(child_id);
+            const child_style = resolvedSpacingStyle(try self.style(child_id), size);
             if (child_style.display == .none) {
                 try self.hideNode(child_id);
                 continue;
@@ -1894,7 +1958,7 @@ pub const LayoutTree = struct {
             }
         }
         for (children) |child_id| {
-            const child_style = try self.style(child_id);
+            const child_style = resolvedSpacingStyle(try self.style(child_id), size);
             if (child_style.display == .none or child_style.position == .absolute) continue;
             const child_node = try self.nodeAt(child_id);
             const resolved_placement = child_node.grid_placement.?;
@@ -2183,7 +2247,6 @@ pub const LayoutTree = struct {
         children: []const NodeId,
         horizontal: bool,
     ) Error!f32 {
-        if (tracks[index] != .auto) return 0;
         var result: f32 = 0;
         for (children) |child_id| {
             const child = try self.nodeConstAt(child_id);
@@ -2208,10 +2271,18 @@ pub const LayoutTree = struct {
                 needsIntrinsicMeasurement(dimension),
                 horizontal,
             );
+            const resolved_margin = resolvedEdges(
+                child.style.margin,
+                child.style.margin_spec,
+                if (horizontal)
+                    Dimensions{ .width = available, .height = 0 }
+                else
+                    Dimensions{ .width = 0, .height = available },
+            );
             const margins = if (horizontal)
-                horizontalEdges(child.style.margin)
+                horizontalEdges(resolved_margin)
             else
-                verticalEdges(child.style.margin);
+                verticalEdges(resolved_margin);
             desired = @min(boundedAdd(desired, margins), @max(available, 0));
             var fixed_span: f32 = 0;
             var auto_count: usize = 0;
@@ -2498,7 +2569,7 @@ pub const LayoutTree = struct {
     ) Error!Dimensions {
         try self.validateComputeDepth(id);
         const node = try self.nodeConstAt(id);
-        const style_value = node.style;
+        const style_value = resolvedSpacingStyle(node.style, containing);
         if (style_value.display == .none) return .{};
         const children = node.children.items;
 
@@ -2515,7 +2586,7 @@ pub const LayoutTree = struct {
             }
         } else {
             for (children) |child_id| {
-                const child_style = try self.style(child_id);
+                const child_style = resolvedSpacingStyle(try self.style(child_id), containing);
                 if (child_style.display == .none or child_style.position == .absolute) continue;
                 const child_size = try self.preferredNodeSize(
                     child_id,
@@ -2527,7 +2598,7 @@ pub const LayoutTree = struct {
                 const outer_height = boundedAdd(child_size.height, verticalEdges(child_style.margin));
                 flow_count += 1;
                 switch (style_value.display) {
-                    .flex => if (style_value.flex_direction == .row) {
+                    .flex => if (flexIsRow(style_value.flex_direction)) {
                         content.width = boundedAdd(content.width, outer_width);
                         content.height = @max(content.height, outer_height);
                     } else {
@@ -2544,17 +2615,17 @@ pub const LayoutTree = struct {
             }
 
             if (style_value.display == .flex and flow_count > 1) {
-                const main_content = if (style_value.flex_direction == .row)
+                const main_content = if (flexIsRow(style_value.flex_direction))
                     content.width
                 else
                     content.height;
-                const parent_main = if (style_value.flex_direction == .row)
+                const parent_main = if (flexIsRow(style_value.flex_direction))
                     containing.width
                 else
                     containing.height;
                 const gap = resolveFlexMainGap(style_value, parent_main, main_content, flow_count);
                 const total_gap = gap * @as(f32, @floatFromInt(flow_count - 1));
-                if (style_value.flex_direction == .row) {
+                if (flexIsRow(style_value.flex_direction)) {
                     content.width = boundedAdd(content.width, total_gap);
                 } else {
                     content.height = boundedAdd(content.height, total_gap);
@@ -2720,24 +2791,49 @@ fn sameId(left: NodeId, right: NodeId) bool {
 fn horizontalEdges(edges: Edges) f32 {
     return boundedAdd(edges.left, edges.right);
 }
+
+fn resolveEdgeSize(value: ?EdgeSize, fallback: f32, parent: f32) f32 {
+    const spec = value orelse return fallback;
+    return switch (spec) {
+        .fixed => |fixed| fixed,
+        .percent => |percent| boundedCoordinate(parent * percent),
+    };
+}
+
+fn resolvedEdges(fallback: Edges, spec: ?ResponsiveEdges, containing: Dimensions) Edges {
+    const values = spec orelse return fallback;
+    return .{
+        .top = resolveEdgeSize(values.top, fallback.top, containing.height),
+        .right = resolveEdgeSize(values.right, fallback.right, containing.width),
+        .bottom = resolveEdgeSize(values.bottom, fallback.bottom, containing.height),
+        .left = resolveEdgeSize(values.left, fallback.left, containing.width),
+    };
+}
+
+fn resolvedSpacingStyle(style: Style, containing: Dimensions) Style {
+    var result = style;
+    result.padding = resolvedEdges(style.padding, style.padding_spec, containing);
+    result.margin = resolvedEdges(style.margin, style.margin_spec, containing);
+    return result;
+}
 fn verticalEdges(edges: Edges) f32 {
     return boundedAdd(edges.top, edges.bottom);
 }
 
 fn marginAlongAxis(edges: Edges, direction: FlexDirection) f32 {
-    return if (direction == .row) horizontalEdges(edges) else verticalEdges(edges);
+    return if (flexIsRow(direction)) horizontalEdges(edges) else verticalEdges(edges);
 }
 
 fn marginAcrossAxis(edges: Edges, direction: FlexDirection) f32 {
-    return if (direction == .row) verticalEdges(edges) else horizontalEdges(edges);
+    return if (flexIsRow(direction)) verticalEdges(edges) else horizontalEdges(edges);
 }
 
 fn mainMargin(style: Style, direction: FlexDirection) f32 {
-    const before = if (direction == .row)
+    const before = if (flexIsRow(direction))
         (if (style.auto_margin.left) 0 else style.margin.left)
     else
         (if (style.auto_margin.top) 0 else style.margin.top);
-    const after = if (direction == .row)
+    const after = if (flexIsRow(direction))
         (if (style.auto_margin.right) 0 else style.margin.right)
     else
         (if (style.auto_margin.bottom) 0 else style.margin.bottom);
@@ -2745,11 +2841,11 @@ fn mainMargin(style: Style, direction: FlexDirection) f32 {
 }
 
 fn crossMargin(style: Style, direction: FlexDirection) f32 {
-    const before = if (direction == .row)
+    const before = if (flexIsRow(direction))
         (if (style.auto_margin.top) 0 else style.margin.top)
     else
         (if (style.auto_margin.left) 0 else style.margin.left);
-    const after = if (direction == .row)
+    const after = if (flexIsRow(direction))
         (if (style.auto_margin.bottom) 0 else style.margin.bottom)
     else
         (if (style.auto_margin.right) 0 else style.margin.right);
@@ -2757,7 +2853,7 @@ fn crossMargin(style: Style, direction: FlexDirection) f32 {
 }
 
 fn autoMainMarginCount(style: Style, direction: FlexDirection) usize {
-    if (direction == .row) {
+    if (flexIsRow(direction)) {
         return @intFromBool(style.auto_margin.left) + @intFromBool(style.auto_margin.right);
     }
     return @intFromBool(style.auto_margin.top) + @intFromBool(style.auto_margin.bottom);
@@ -2765,7 +2861,7 @@ fn autoMainMarginCount(style: Style, direction: FlexDirection) usize {
 
 fn resolvedMainMarginEdges(style: Style, direction: FlexDirection, share: f32) Edges {
     var result = style.margin;
-    if (direction == .row) {
+    if (flexIsRow(direction)) {
         if (style.auto_margin.left) result.left = share;
         if (style.auto_margin.right) result.right = share;
     } else {
@@ -2804,6 +2900,25 @@ fn rowChildX(
     }
     return boundedAdd(origin_x, boundedAdd(cursor, margin.left));
 }
+fn columnChildY(
+    origin_y: f32,
+    content_height: f32,
+    cursor: f32,
+    child_height: f32,
+    margin: Edges,
+    reverse: bool,
+) f32 {
+    if (reverse) {
+        return boundedAdd(
+            origin_y,
+            boundedSubtract(
+                boundedSubtract(content_height, cursor),
+                boundedAdd(child_height, margin.bottom),
+            ),
+        );
+    }
+    return boundedAdd(origin_y, boundedAdd(cursor, margin.top));
+}
 
 fn crossAxisOffset(
     alignment: AlignItems,
@@ -2813,17 +2928,17 @@ fn crossAxisOffset(
     direction: FlexDirection,
     line_baseline: ?f32,
 ) f32 {
-    const before_auto = if (direction == .row) style.auto_margin.top else style.auto_margin.left;
-    const after_auto = if (direction == .row) style.auto_margin.bottom else style.auto_margin.right;
+    const before_auto = if (flexIsRow(direction)) style.auto_margin.top else style.auto_margin.left;
+    const after_auto = if (flexIsRow(direction)) style.auto_margin.bottom else style.auto_margin.right;
     const margin_before = if (before_auto)
         0
-    else if (direction == .row)
+    else if (flexIsRow(direction))
         style.margin.top
     else
         style.margin.left;
     const margin_after = if (after_auto)
         0
-    else if (direction == .row)
+    else if (flexIsRow(direction))
         style.margin.bottom
     else
         style.margin.right;
@@ -2832,7 +2947,7 @@ fn crossAxisOffset(
     if (before_auto and after_auto) return boundedAdd(margin_before, free / 2);
     if (before_auto) return boundedAdd(margin_before, free);
     if (after_auto) return margin_before;
-    if (alignment == .baseline and direction == .row and line_baseline != null) {
+    if (alignment == .baseline and flexIsRow(direction) and line_baseline != null) {
         return @max(boundedSubtract(line_baseline.?, baselineOffset(style, child_size)), 0);
     }
     const alignment_offset = switch (alignment) {
@@ -2902,7 +3017,7 @@ fn clampFlexMain(
 ) f32 {
     const margin = mainMargin(style, direction);
     const box_value = boundedSubtract(value, margin);
-    const clamped = if (direction == .row)
+    const clamped = if (flexIsRow(direction))
         clampDimensionWithIntrinsic(box_value, style.min_width, style.max_width, parent_main, intrinsic_tiers, style.width == .auto, true)
     else
         clampDimensionWithIntrinsic(box_value, style.min_height, style.max_height, parent_main, intrinsic_tiers, style.height == .auto, false);
@@ -2958,17 +3073,17 @@ fn flexBaseDimension(
     intrinsic_measurement: ?Dimensions,
     intrinsic_tiers: ?IntrinsicDimensions,
 ) f32 {
-    const main_dimension = if (direction == .row) style.width else style.height;
+    const main_dimension = if (flexIsRow(direction)) style.width else style.height;
     const basis = if (style.flex_basis != .auto) style.flex_basis else main_dimension;
     if (intrinsic_measurement) |measured| {
         if (needsIntrinsicMeasurement(basis)) {
             return resolveContentDimension(
                 basis,
                 main_parent,
-                if (direction == .row) measured.width else measured.height,
+                if (flexIsRow(direction)) measured.width else measured.height,
                 measured,
                 intrinsic_tiers,
-                direction == .row,
+                flexIsRow(direction),
             );
         }
     }
@@ -2979,10 +3094,10 @@ fn flexBaseDimension(
         };
     }
     if (style.aspect_ratio) |ratio| {
-        const cross_dimension = if (direction == .row) style.height else style.width;
+        const cross_dimension = if (flexIsRow(direction)) style.height else style.width;
         if (main_dimension == .auto and cross_dimension != .auto) {
             const cross = boundedResolved(cross_dimension, cross_parent);
-            const resolved = if (direction == .row) cross * ratio else cross / ratio;
+            const resolved = if (flexIsRow(direction)) cross * ratio else cross / ratio;
             return if (finite(resolved)) @max(resolved, 0) else std.math.floatMax(f32);
         }
     }
@@ -2993,7 +3108,7 @@ fn flexBaseDimension(
 }
 
 fn flexMainDimension(style: Style, direction: FlexDirection) Dimension {
-    return if (direction == .row) style.width else style.height;
+    return if (flexIsRow(direction)) style.width else style.height;
 }
 
 fn flexMainFactor(style: Style, direction: FlexDirection, free: f32, base: f32) f32 {
@@ -3064,11 +3179,11 @@ fn resolveTypedGap(
     if (maximum) |value| {
         result = @min(result, resolveGapValue(value, parent, remaining, gap_count));
     }
-    return if (finite(result)) @max(result, 0) else std.math.floatMax(f32);
+    return if (finite(result)) result else std.math.floatMax(f32);
 }
 
 fn resolveFlexMainGap(style: Style, parent: f32, occupied: f32, item_count: usize) f32 {
-    const axis: GapAxis = if (style.flex_direction == .row) .column else .row;
+    const axis: GapAxis = if (flexIsRow(style.flex_direction)) .column else .row;
     return resolveTypedGap(
         axisGapSpec(style, axis) orelse style.flex_gap_spec,
         axisMinGapSpec(style, axis) orelse style.min_flex_gap_spec,
@@ -3081,7 +3196,7 @@ fn resolveFlexMainGap(style: Style, parent: f32, occupied: f32, item_count: usiz
 }
 
 fn resolveFlexCrossGap(style: Style, parent: f32, occupied: f32, line_count: usize) f32 {
-    const axis: GapAxis = if (style.flex_direction == .row) .row else .column;
+    const axis: GapAxis = if (flexIsRow(style.flex_direction)) .row else .column;
     return resolveTypedGap(
         axisGapSpec(style, axis) orelse style.flex_gap_spec,
         axisMinGapSpec(style, axis) orelse style.min_flex_gap_spec,
@@ -3207,16 +3322,34 @@ fn validateEdges(edges: Edges) Error!void {
         return error.InvalidStyle;
     }
 }
+
 fn validateGapSpec(spec: ?Gap) Error!void {
     if (spec) |gap| switch (gap) {
-        .fixed, .percent => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
+        .fixed => |value| if (!finite(value)) return error.InvalidStyle,
+        .percent => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
         .stretch => |factor| if (!finite(factor) or factor <= 0) return error.InvalidStyle,
     };
+}
+
+fn validateEdgeSize(value: ?EdgeSize) Error!void {
+    if (value) |size| switch (size) {
+        .fixed, .percent => |amount| if (!finite(amount) or amount < 0) return error.InvalidStyle,
+    };
+}
+
+fn validateResponsiveEdges(spec: ?ResponsiveEdges) Error!void {
+    const edges = spec orelse return;
+    try validateEdgeSize(edges.top);
+    try validateEdgeSize(edges.right);
+    try validateEdgeSize(edges.bottom);
+    try validateEdgeSize(edges.left);
 }
 
 fn validateStyle(style: Style) Error!void {
     try validateEdges(style.padding);
     try validateEdges(style.margin);
+    try validateResponsiveEdges(style.padding_spec);
+    try validateResponsiveEdges(style.margin_spec);
     try validateGapSpec(style.flex_gap_spec);
     try validateGapSpec(style.column_gap_spec);
     try validateGapSpec(style.row_gap_spec);
@@ -3226,7 +3359,8 @@ fn validateStyle(style: Style) Error!void {
     try validateGapSpec(style.max_row_gap_spec);
     try validateGapSpec(style.min_flex_gap_spec);
     try validateGapSpec(style.max_flex_gap_spec);
-    if (@intFromEnum(style.direction) >= 2 or
+    if (@intFromEnum(style.flex_direction) >= 4 or
+        @intFromEnum(style.direction) >= 2 or
         @intFromEnum(style.grid_auto_flow) >= 4 or
         @intFromEnum(style.flex_wrap) >= 3 or
         @intFromEnum(style.align_items) >= 5 or
@@ -3394,6 +3528,22 @@ fn insetValue(dimension: Dimension, parent: f32) ?f32 {
         .percent => |value| parent * value,
         // Stretch is a size, not an inset.
         .stretch => null,
+    };
+}
+
+fn relativePositionOrigin(origin: Point, style: Style, containing: Dimensions) Point {
+    const left = insetValue(style.left, containing.width);
+    const right = insetValue(style.right, containing.width);
+    const top = insetValue(style.top, containing.height);
+    const bottom = insetValue(style.bottom, containing.height);
+    const x_offset = if (style.direction == .rtl)
+        if (right) |value| -value else left orelse 0
+    else
+        left orelse if (right) |value| -value else 0;
+    const y_offset = top orelse if (bottom) |value| -value else 0;
+    return .{
+        .x = boundedAdd(origin.x, x_offset),
+        .y = boundedAdd(origin.y, y_offset),
     };
 }
 fn clipForNode(overflow: Overflow, inherited: ?ClipRect, origin: Point, size: Dimensions) ?ClipRect {
@@ -3701,6 +3851,59 @@ test "row and column flex layout resolve basic sizes" {
     try tree.appendChild(column, item);
     try tree.compute(column, .{ .width = 40, .height = 100 });
     try std.testing.expectEqual(Layout{ .width = 10, .height = 25 }, try tree.readLayout(item));
+}
+
+test "reverse flex directions mirror their main axis" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const row = try tree.create(.{
+        .flex_direction = .row_reverse,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+    });
+    const row_first = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    const row_second = try tree.create(.{ .width = .{ .length = 20 }, .height = .{ .length = 10 } });
+    try tree.appendChild(row, row_first);
+    try tree.appendChild(row, row_second);
+    try tree.compute(row, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(Layout{ .x = 70, .width = 30, .height = 10 }, try tree.readLayout(row_first));
+    try std.testing.expectEqual(Layout{ .x = 50, .width = 20, .height = 10 }, try tree.readLayout(row_second));
+
+    const column = try tree.create(.{
+        .flex_direction = .column_reverse,
+        .width = .{ .length = 20 },
+        .height = .{ .length = 100 },
+    });
+    const column_first = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 30 } });
+    const column_second = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 20 } });
+    try tree.appendChild(column, column_first);
+    try tree.appendChild(column, column_second);
+    try tree.compute(column, .{ .width = 20, .height = 100 });
+    try std.testing.expectEqual(Layout{ .y = 70, .width = 10, .height = 30 }, try tree.readLayout(column_first));
+    try std.testing.expectEqual(Layout{ .y = 50, .width = 10, .height = 20 }, try tree.readLayout(column_second));
+}
+
+test "relative insets offset boxes without changing flex flow" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 40 } });
+    const first = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .left = .{ .percent = 0.1 },
+        .top = .{ .length = 4 },
+    });
+    const second = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .right = .{ .length = 5 },
+        .bottom = .{ .length = 3 },
+    });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.compute(root, .{ .width = 100, .height = 40 });
+    try std.testing.expectEqual(Layout{ .x = 10, .y = 4, .width = 20, .height = 10 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .x = 15, .y = -3, .width = 20, .height = 10 }, try tree.readLayout(second));
 }
 
 test "rtl row direction mirrors child placement while absolute insets stay physical" {
@@ -4668,6 +4871,52 @@ test "typed flex gaps resolve percentages, stretch, and bounds" {
     try std.testing.expectEqual(@as(f32, 35), (try tree.readLayout(second)).x);
 }
 
+test "negative fixed gaps honor typed bounds" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+        .flex_gap_spec = Gap.fixedPx(-10),
+        .min_flex_gap_spec = Gap.fixedPx(-4),
+    });
+    const first = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 } });
+    const second = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 6), (try tree.readLayout(second)).x);
+}
+
+test "responsive padding and margins follow containing axes" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 200 },
+        .height = .{ .length = 100 },
+        .padding_spec = ResponsiveEdges.all(EdgeSize.percentOfParent(0.1)),
+    });
+    const child = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .margin_spec = .{
+            .left = EdgeSize.percentOfParent(0.1),
+            .top = EdgeSize.percentOfParent(0.25),
+        },
+    });
+    try tree.appendChild(root, child);
+    try tree.compute(root, .{ .width = 200, .height = 100 });
+    try std.testing.expectEqual(Layout{ .x = 36, .y = 30, .width = 20, .height = 10 }, try tree.readLayout(child));
+
+    try tree.setStyle(root, .{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 50 },
+        .padding_spec = ResponsiveEdges.all(EdgeSize.percentOfParent(0.1)),
+    });
+    try tree.compute(root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(Layout{ .x = 18, .y = 15, .width = 20, .height = 10 }, try tree.readLayout(child));
+}
+
 test "axis-specific typed gaps resolve flex wrapping and grid tracks" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 12 });
     defer tree.deinit();
@@ -4710,13 +4959,15 @@ test "axis-specific typed gaps resolve flex wrapping and grid tracks" {
     try std.testing.expectEqual(@as(f32, 45), (try tree.readLayout(grid_third)).y);
 }
 
-test "typed flex gaps reject invalid values" {
+test "typed spacing rejects invalid values" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
     defer tree.deinit();
-    try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_gap_spec = Gap.fixedPx(-1) }));
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .flex_gap_spec = Gap.percentOfParent(std.math.inf(f32)) }));
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .min_flex_gap_spec = Gap.percentOfParent(-0.1) }));
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .max_flex_gap_spec = Gap.stretchFactor(0) }));
+    try std.testing.expectError(error.InvalidStyle, tree.create(.{
+        .padding_spec = .{ .left = EdgeSize.percentOfParent(-0.1) },
+    }));
 }
 test "wrapped row forms bounded lines and places cross axis" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });

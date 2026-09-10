@@ -15,6 +15,9 @@ All notable changes to ZLAY are recorded here. The format follows
   solver bridge.
 - Added pinned Taffy and Morphorm overlap fixtures for flex distribution,
   implicit and intrinsic-auto grids, and dirty-layout equivalence.
+- Added reverse row/column flex axes, flow-neutral relative inset offsets,
+  fixed/percentage responsive padding and margins, and bounded negative fixed
+  gaps.
 
 ### Changed
 
