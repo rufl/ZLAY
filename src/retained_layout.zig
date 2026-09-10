@@ -87,14 +87,20 @@ fn aspectRatioDimension(width: f32, height: f32, ratio: f32, width_auto: bool, h
     return .{ .width = width, .height = height };
 }
 
-/// One explicit grid track. `fixed` is pixels; `fr` receives a share of the
-/// space left after fixed tracks and gaps.
+/// One explicit grid track. `fixed` is pixels; `auto` uses bounded intrinsic
+/// child dimensions when available; `fr` receives a share of the space left
+/// after fixed/auto tracks and gaps.
 pub const GridTrack = union(enum) {
     fixed: f32,
+    auto,
     fr: f32,
 
     pub fn fixedPx(value: f32) GridTrack {
         return .{ .fixed = value };
+    }
+
+    pub fn autoSized() GridTrack {
+        return .auto;
     }
 
     pub fn fractional(value: f32) GridTrack {
@@ -1338,27 +1344,12 @@ pub const LayoutTree = struct {
 
         var auto_cursor: usize = 0;
         const cell_count = columns.len * rows.len;
+        // Resolve every placement before measuring. Auto-track contributions
+        // must see intrinsic children in both explicit and automatic cells.
         for (children) |child_id| {
             const child_style = try self.style(child_id);
-            if (child_style.display == .none) {
-                try self.hideNode(child_id);
-                continue;
-            }
-            if (child_style.position == .absolute) {
-                try self.computeAbsolute(child_id, child_style, size, origin, inherited_clip, measure, measure_user_data);
-                continue;
-            }
-            const child_node = try self.nodeAt(child_id);
-            child_node.intrinsic_measurement = null;
-            child_node.intrinsic_tiers = null;
-            if (measure != null and child_node.children.items.len == 0 and
-                (child_style.width == .auto or child_style.height == .auto))
-            {
-                const measured = measure.?(child_id, size, measure_user_data);
-                try validateDimensions(measured);
-                child_node.intrinsic_measurement = measured;
-            }
-            var placement = child_node.grid_placement;
+            if (child_style.display == .none or child_style.position == .absolute) continue;
+            var placement = (try self.nodeConstAt(child_id)).grid_placement;
             if (placement == null) {
                 while (auto_cursor < cell_count) : (auto_cursor += 1) {
                     const candidate = GridPlacement{
@@ -1381,21 +1372,52 @@ pub const LayoutTree = struct {
                 (try self.nodeAt(child_id)).grid_placement = placement;
                 auto_cursor += 1;
             }
-
-            const resolved_placement = placement.?;
-            var child_width = gridTrackSpanDimension(
+        }
+        // Measure after placement so auto tracks can use all available
+        // intrinsic contributions, including children auto-placed later.
+        for (children) |child_id| {
+            const child_style = try self.style(child_id);
+            if (child_style.display == .none) {
+                try self.hideNode(child_id);
+                continue;
+            }
+            if (child_style.position == .absolute) {
+                try self.computeAbsolute(child_id, child_style, size, origin, inherited_clip, measure, measure_user_data);
+                continue;
+            }
+            const child_node = try self.nodeAt(child_id);
+            child_node.intrinsic_measurement = null;
+            child_node.intrinsic_tiers = null;
+            if (measure != null and child_node.children.items.len == 0 and
+                (child_style.width == .auto or child_style.height == .auto))
+            {
+                const measured = measure.?(child_id, size, measure_user_data);
+                try validateDimensions(measured);
+                child_node.intrinsic_measurement = measured;
+            }
+        }
+        for (children) |child_id| {
+            const child_style = try self.style(child_id);
+            if (child_style.display == .none or child_style.position == .absolute) continue;
+            const child_node = try self.nodeAt(child_id);
+            const resolved_placement = child_node.grid_placement.?;
+            var child_width = try self.gridTrackSpanDimension(
                 columns,
                 resolved_placement.column,
                 resolved_placement.column_span,
                 size.width,
                 column_gap,
+                children,
+                true,
             );
-            var child_height = gridTrackSpanDimension(
+            var child_height = try self.gridTrackSpanDimension(
                 rows,
                 resolved_placement.row,
                 resolved_placement.row_span,
                 size.height,
                 row_gap,
+                children,
+                false,
             );
             if (child_node.intrinsic_measurement) |measured| {
                 if (child_style.width == .auto) child_width = measured.width;
@@ -1405,13 +1427,14 @@ pub const LayoutTree = struct {
                 child_height = boundedSubtract(child_height, verticalEdges(child_style.margin));
             }
             const child_x = boundedAdd(
-                boundedAdd(origin.x, gridTrackOffset(columns, resolved_placement.column, size.width, column_gap)),
+                boundedAdd(origin.x, try self.gridTrackOffset(columns, resolved_placement.column, size.width, column_gap, children, true)),
                 child_style.margin.left,
             );
             const child_y = boundedAdd(
-                boundedAdd(origin.y, gridTrackOffset(rows, resolved_placement.row, size.height, row_gap)),
+                boundedAdd(origin.y, try self.gridTrackOffset(rows, resolved_placement.row, size.height, row_gap, children, false)),
                 child_style.margin.top,
             );
+            const preserved_measurement = child_node.intrinsic_measurement;
             try self.computeNode(
                 child_id,
                 .{ .x = child_x, .y = child_y },
@@ -1422,6 +1445,11 @@ pub const LayoutTree = struct {
                 measure,
                 measure_user_data,
             );
+            // Later siblings still need earlier intrinsic contributions when
+            // their track offsets are resolved.
+            if (preserved_measurement) |measured| {
+                (try self.nodeAt(child_id)).intrinsic_measurement = measured;
+            }
         }
     }
 
@@ -1433,6 +1461,138 @@ pub const LayoutTree = struct {
             if (gridPlacementsOverlap(candidate, placement)) return true;
         }
         return false;
+    }
+    fn gridTrackDimension(
+        self: *const LayoutTree,
+        tracks: []const GridTrack,
+        index: usize,
+        available: f32,
+        gap: f32,
+        children: []const NodeId,
+        horizontal: bool,
+    ) Error!f32 {
+        const total_gap = if (tracks.len > 1)
+            gap * @as(f32, @floatFromInt(tracks.len - 1))
+        else
+            0;
+        const usable = @max(boundedSubtract(available, total_gap), 0);
+        var fixed: f32 = 0;
+        var auto: f32 = 0;
+        var fractions: f32 = 0;
+        for (tracks, 0..) |track, track_index| {
+            switch (track) {
+                .fixed => |value| fixed = boundedAdd(fixed, value),
+                .auto => auto = boundedAdd(auto, try self.gridTrackAutoSize(
+                    tracks,
+                    track_index,
+                    available,
+                    gap,
+                    children,
+                    horizontal,
+                )),
+                .fr => |value| fractions = boundedAdd(fractions, value),
+            }
+        }
+        return switch (tracks[index]) {
+            .fixed => |value| value,
+            .auto => try self.gridTrackAutoSize(tracks, index, available, gap, children, horizontal),
+            .fr => |value| weightedShare(
+                boundedSubtract(usable, boundedAdd(fixed, auto)),
+                value,
+                fractions,
+            ),
+        };
+    }
+
+    fn gridTrackAutoSize(
+        self: *const LayoutTree,
+        tracks: []const GridTrack,
+        index: usize,
+        available: f32,
+        gap: f32,
+        children: []const NodeId,
+        horizontal: bool,
+    ) Error!f32 {
+        if (tracks[index] != .auto) return 0;
+        var result: f32 = 0;
+        for (children) |child_id| {
+            const child = try self.nodeConstAt(child_id);
+            if (child.style.display == .none or child.style.position == .absolute) continue;
+            const placement = child.grid_placement orelse continue;
+            const start = if (horizontal) placement.column else placement.row;
+            const span = if (horizontal) placement.column_span else placement.row_span;
+            if (index < start or index >= start + span) continue;
+            const measured = child.intrinsic_measurement orelse continue;
+            const desired = @min(
+                @max(if (horizontal) measured.width else measured.height, 0),
+                @max(available, 0),
+            );
+            var fixed_span: f32 = 0;
+            var auto_count: usize = 0;
+            for (0..span) |offset| {
+                switch (tracks[start + offset]) {
+                    .fixed => |value| fixed_span = boundedAdd(fixed_span, value),
+                    .auto => auto_count += 1,
+                    .fr => {},
+                }
+            }
+            if (auto_count == 0) continue;
+            const span_gap = if (span > 1)
+                gap * @as(f32, @floatFromInt(span - 1))
+            else
+                0;
+            const remaining = @max(
+                boundedSubtract(boundedSubtract(desired, fixed_span), span_gap),
+                0,
+            );
+            const contribution = remaining / @as(f32, @floatFromInt(auto_count));
+            if (finite(contribution)) result = @max(result, contribution);
+        }
+        return boundedCoordinate(result);
+    }
+
+    fn gridTrackSpanDimension(
+        self: *const LayoutTree,
+        tracks: []const GridTrack,
+        start: usize,
+        span: usize,
+        available: f32,
+        gap: f32,
+        children: []const NodeId,
+        horizontal: bool,
+    ) Error!f32 {
+        var total: f32 = 0;
+        for (0..span) |offset| {
+            total = boundedAdd(total, try self.gridTrackDimension(
+                tracks,
+                start + offset,
+                available,
+                gap,
+                children,
+                horizontal,
+            ));
+        }
+        if (span > 1) total = boundedAdd(total, gap * @as(f32, @floatFromInt(span - 1)));
+        return total;
+    }
+
+    fn gridTrackOffset(
+        self: *const LayoutTree,
+        tracks: []const GridTrack,
+        index: usize,
+        available: f32,
+        gap: f32,
+        children: []const NodeId,
+        horizontal: bool,
+    ) Error!f32 {
+        var offset: f32 = 0;
+        for (0..index) |track_index| {
+            offset = boundedAdd(offset, boundedAdd(
+                try self.gridTrackDimension(tracks, track_index, available, gap, children, horizontal),
+                gap,
+            ));
+        }
+        return offset;
     }
 
     fn gridCellOccupied(self: *LayoutTree, children: []const NodeId, cell: usize, column_count: usize) Error!bool {
@@ -1783,43 +1943,11 @@ fn resolveGapValue(spec: Gap, parent: f32, remaining: f32, gap_count: usize) f32
     };
 }
 
-fn gridTrackDimension(tracks: []const GridTrack, index: usize, available: f32, gap: f32) f32 {
-    const total_gap = gap * @as(f32, @floatFromInt(tracks.len - 1));
-    const usable = @max(available - total_gap, 0);
-    var fixed: f32 = 0;
-    var fractions: f32 = 0;
-    for (tracks) |track| switch (track) {
-        .fixed => |value| fixed += value,
-        .fr => |value| fractions += value,
-    };
-    return switch (tracks[index]) {
-        .fixed => |value| value,
-        .fr => |value| if (fractions > 0) @max(usable - fixed, 0) * value / fractions else 0,
-    };
-}
-
-fn gridTrackSpanDimension(tracks: []const GridTrack, start: usize, span: usize, available: f32, gap: f32) f32 {
-    var total: f32 = 0;
-    for (0..span) |offset| {
-        total += gridTrackDimension(tracks, start + offset, available, gap);
-    }
-    if (span > 1) total += gap * @as(f32, @floatFromInt(span - 1));
-    return total;
-}
-
 fn gridPlacementsOverlap(left: GridPlacement, right: GridPlacement) bool {
     return left.column < right.column + right.column_span and
         right.column < left.column + left.column_span and
         left.row < right.row + right.row_span and
         right.row < left.row + left.row_span;
-}
-
-fn gridTrackOffset(tracks: []const GridTrack, index: usize, available: f32, gap: f32) f32 {
-    var offset: f32 = 0;
-    for (0..index) |track_index| {
-        offset += gridTrackDimension(tracks, track_index, available, gap) + gap;
-    }
-    return offset;
 }
 
 fn validateGridCapacity(style: Style, options: Options) Error!void {
@@ -1899,10 +2027,12 @@ fn validateStyle(style: Style) Error!void {
     }
     for (style.grid_columns) |track| switch (track) {
         .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
+        .auto => {},
         .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
     };
     for (style.grid_rows) |track| switch (track) {
         .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
+        .auto => {},
         .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
     };
     if ((style.grid_column == 0) != (style.grid_row == 0)) return error.InvalidStyle;
@@ -2263,6 +2393,63 @@ test "grid fixed and fractional tracks place explicit and automatic children" {
     try std.testing.expectEqual(Layout{ .x = 35, .width = 65, .height = 10 }, try tree.readLayout(explicit_a));
     try std.testing.expectEqual(Layout{ .y = 15, .width = 30, .height = 65 }, try tree.readLayout(explicit_b));
     try std.testing.expectEqual(Layout{ .width = 30, .height = 10 }, try tree.readLayout(automatic));
+}
+
+test "grid auto tracks use intrinsic child dimensions before fr space" {
+    const columns = [_]GridTrack{ .auto, .{ .fr = 1 } };
+    const rows = [_]GridTrack{ .auto, .{ .fr = 1 } };
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 80 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+        .grid_gap = 5,
+    });
+    const intrinsic = try tree.create(.{ .grid_column = 1, .grid_row = 1 });
+    const fractional = try tree.create(.{
+        .grid_column = 2,
+        .grid_row = 2,
+        .width = .{ .stretch = 1 },
+        .height = .{ .stretch = 1 },
+    });
+    try tree.appendChild(root, intrinsic);
+    try tree.appendChild(root, fractional);
+    var probe = IntrinsicProbe{ .dimensions = .{ .width = 30, .height = 12 } };
+    try tree.computeWithMeasure(root, .{ .width = 100, .height = 80 }, measureIntrinsic, &probe);
+    try std.testing.expectEqual(Layout{ .width = 30, .height = 12 }, try tree.readLayout(intrinsic));
+    try std.testing.expectEqual(Layout{ .x = 35, .y = 17, .width = 65, .height = 63 }, try tree.readLayout(fractional));
+}
+
+test "grid mixed fixed auto and fractional tracks stay finite without intrinsic data" {
+    const columns = [_]GridTrack{ .{ .fixed = 20 }, .auto, .{ .fr = 1 } };
+    const rows = [_]GridTrack{.{ .fixed = 40 }};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 40 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+        .grid_gap = 5,
+    });
+    const first = try tree.create(.{ .grid_column = 1, .grid_row = 1, .width = .{ .stretch = 1 } });
+    const second = try tree.create(.{ .grid_column = 2, .grid_row = 1, .width = .{ .stretch = 1 } });
+    const third = try tree.create(.{ .grid_column = 3, .grid_row = 1, .width = .{ .stretch = 1 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.appendChild(root, third);
+    try tree.compute(root, .{ .width = 100, .height = 40 });
+    const first_layout = try tree.readLayout(first);
+    const second_layout = try tree.readLayout(second);
+    const third_layout = try tree.readLayout(third);
+    try std.testing.expect(std.math.isFinite(first_layout.width));
+    try std.testing.expect(std.math.isFinite(second_layout.width));
+    try std.testing.expect(std.math.isFinite(third_layout.width));
+    try std.testing.expectEqual(@as(f32, 70), third_layout.width);
 }
 
 test "grid excludes none and absolute children from placement" {
