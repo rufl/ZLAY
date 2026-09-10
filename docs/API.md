@@ -590,3 +590,12 @@ explicit activation/consumption; tabs and lists preserve registration order
 with wrapping or clamped movement; dialogs provide open, close, toggle, and
 Escape handling. These types contain interaction state only; layout, drawing,
 platform input, and accessibility semantics remain application-owned.
+
+## Text widgets and virtualization
+
+`zlay.text_widgets` provides caller-storage-backed byte-oriented text editing
+and pure virtual-list range calculations. `TextInput` supports cursor movement,
+selection, insertion, deletion, and bounded capacity. Virtual-list helpers
+return deterministic half-open visible ranges with optional overscan. UTF-8
+grapheme behavior, font measurement, row rendering, and data ownership remain
+application-owned.

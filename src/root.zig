@@ -19,6 +19,7 @@ pub const animation = @import("animation.zig");
 pub const retained_layout = @import("retained_layout.zig");
 pub const interaction = @import("interaction.zig");
 pub const widgets = @import("widgets.zig");
+pub const text_widgets = @import("text_widgets.zig");
 pub const engine = @import("context.zig");
 
 pub const Context = engine.Context;
