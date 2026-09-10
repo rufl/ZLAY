@@ -275,7 +275,7 @@ pub const Interaction = struct {
     /// Update hover from a pointer hit and dispatch using current capture.
     /// Invalid or absent hits clear hover; capture still takes precedence.
     pub fn dispatchPointer(self: *Interaction, event: Event) DispatchDecision {
-        std.debug.assert(event.kind == .pointer);
+        if (event.kind != .pointer) return self.dispatch(event);
         const hover_target = if (event.hit_target) |id| if (self.contains(id)) id else null else null;
         _ = self.setHovered(hover_target);
         return self.dispatch(event);
@@ -390,6 +390,18 @@ test "hover-aware pointer dispatch tracks valid hits and preserves capture" {
     try std.testing.expectEqual(captured, invalid_decision.target.?);
     try std.testing.expect(state.hovered() == null);
     try std.testing.expectEqual(DispatchKind.captured, invalid_decision.kind);
+}
+
+test "hover-aware dispatch leaves keyboard events read-only" {
+    var storage: [1]ElementId = undefined;
+    var state = Interaction.init(&storage);
+    const focused = ElementId{ .id = 4 };
+    try state.register(focused);
+    try std.testing.expect(state.setHovered(focused));
+    try std.testing.expect(state.focus(focused));
+    const decision = state.dispatchPointer(.{ .kind = .keyboard });
+    try std.testing.expectEqual(focused, decision.target.?);
+    try std.testing.expectEqual(focused, state.hovered().?);
 }
 
 test "keyboard dispatch follows focus and invalid hit targets are rejected" {

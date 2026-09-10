@@ -628,10 +628,10 @@ pointer state. Registering elements establishes deterministic keyboard order.
 registration index and `focusedIndex` reports the current index. Navigation
 supports wrapping or clamping, `setHovered` validates and updates the current
 hover target, and `dispatchPointer` updates hover from a validated hit target
-before dispatching to pointer capture or the hit target.
-`dispatch` remains a renderer-neutral read-only decision for keyboard focus,
-pointer capture, or hit-test input. Unregistering an element clears any focus,
-hover, or capture owned by it.
+before dispatching to pointer capture or the hit target. Non-pointer events
+passed to `dispatchPointer` are forwarded read-only to `dispatch` without
+mutating hover state. Unregistering an element clears any focus, hover, or
+capture owned by it.
 
 ## Widget state primitives
 
