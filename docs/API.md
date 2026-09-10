@@ -573,6 +573,11 @@ or automatic placement, and row/column spans. `computeWithMeasure` adds a
 caller-supplied allocation-free intrinsic measurement hook. Block flow, CSS
 parsing, and full browser layout semantics remain outside this API.
 
+`zlay.retained_store` provides a caller-owned generational record store for
+ECS-style applications that keep layout data outside `LayoutTree`. It supplies
+bounded node records, flat child buckets, stale-ID detection, and explicit
+style/layout mutation. It is a storage adapter, not a second layout solver.
+
 ## Interaction foundation
 
 `zlay.interaction.Interaction` provides caller-storage-backed focus and pointer

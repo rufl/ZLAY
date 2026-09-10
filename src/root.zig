@@ -21,6 +21,7 @@ pub const interaction = @import("interaction.zig");
 pub const widgets = @import("widgets.zig");
 pub const text_widgets = @import("text_widgets.zig");
 pub const accessibility = @import("accessibility.zig");
+pub const retained_store = @import("retained_store.zig");
 pub const engine = @import("context.zig");
 
 pub const Context = engine.Context;
