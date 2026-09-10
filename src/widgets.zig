@@ -100,6 +100,59 @@ pub const Button = struct {
     }
 };
 
+/// Renderer-neutral checkbox state driven by keyboard or pointer activation.
+pub const Checkbox = struct {
+    id: ElementId,
+    enabled: bool = true,
+    checked: bool = false,
+
+    pub fn init(id: ElementId, checked: bool) Checkbox {
+        return .{ .id = id, .checked = checked };
+    }
+
+    pub fn setEnabled(self: *Checkbox, enabled: bool) void {
+        self.enabled = enabled;
+    }
+
+    pub fn isChecked(self: *const Checkbox) bool {
+        return self.checked;
+    }
+
+    pub fn setChecked(self: *Checkbox, checked: bool) void {
+        self.checked = checked;
+    }
+
+    pub fn toggle(self: *Checkbox) bool {
+        if (!self.enabled) return false;
+        self.checked = !self.checked;
+        return true;
+    }
+
+    pub fn handle(self: *Checkbox, event: Event) bool {
+        return switch (event) {
+            .activate => self.toggle(),
+            .key => |key| switch (key) {
+                .enter, .space => self.toggle(),
+                else => false,
+            },
+        };
+    }
+
+    pub fn dispatch(
+        self: *Checkbox,
+        state: *const interaction.Interaction,
+        event: interaction.Event,
+    ) bool {
+        if (!state.shouldDispatch(event, self.id)) return false;
+        if (event.kind == .pointer and event.pointer_phase != .up) return false;
+        return self.toggle();
+    }
+
+    pub fn register(self: *const Checkbox, state: *interaction.Interaction) interaction.Error!void {
+        try state.register(self.id);
+    }
+};
+
 /// A bounded ordered collection of tab IDs and its selected index.
 pub const Tabs = struct {
     storage: []ElementId,
@@ -358,6 +411,22 @@ test "button dispatch follows interaction focus and pointer release" {
     button.reset();
     try std.testing.expect(!button.dispatch(&interaction_state, .{ .kind = .pointer, .hit_target = id, .pointer_phase = .down }));
     try std.testing.expect(button.dispatch(&interaction_state, .{ .kind = .pointer, .hit_target = id, .pointer_phase = .up }));
+}
+
+test "checkbox toggles through keys and pointer release" {
+    var checkbox = Checkbox.init(.{ .id = 30 }, false);
+    try std.testing.expect(!checkbox.isChecked());
+    try std.testing.expect(checkbox.handle(.{ .key = .space }));
+    try std.testing.expect(checkbox.isChecked());
+    var ids: [1]ElementId = undefined;
+    var state = interaction.Interaction.init(&ids);
+    try checkbox.register(&state);
+    try std.testing.expect(!checkbox.dispatch(&state, .{ .kind = .pointer, .hit_target = checkbox.id, .pointer_phase = .down }));
+    try std.testing.expect(checkbox.dispatch(&state, .{ .kind = .pointer, .hit_target = checkbox.id, .pointer_phase = .up }));
+    try std.testing.expect(!checkbox.isChecked());
+    checkbox.setEnabled(false);
+    try std.testing.expect(!checkbox.toggle());
+    try std.testing.expect(!checkbox.isChecked());
 }
 
 test "tabs select and move with wrap and clamp" {
