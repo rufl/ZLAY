@@ -32,6 +32,9 @@ pub const NodeId = struct {
 pub const Display = enum { flex, grid, none };
 pub const Position = enum { relative, absolute };
 pub const FlexDirection = enum { row, column };
+pub const AlignItems = enum { stretch, flex_start, flex_end, center };
+pub const AlignSelf = enum { auto, stretch, flex_start, flex_end, center };
+pub const JustifyContent = enum { flex_start, flex_end, center, space_between, space_around, space_evenly };
 pub const Overflow = enum { visible, clip };
 
 /// A renderer-neutral visible region for a laid out node and its descendants.
@@ -101,6 +104,9 @@ pub const Style = struct {
     display: Display = .flex,
     position: Position = .relative,
     flex_direction: FlexDirection = .row,
+    align_items: AlignItems = .flex_start,
+    align_self: AlignSelf = .auto,
+    justify_content: JustifyContent = .flex_start,
     width: Dimension = .auto,
     height: Dimension = .auto,
     min_width: Dimension = .{ .length = 0 },
@@ -542,7 +548,19 @@ pub const LayoutTree = struct {
             }
         }
 
-        var cursor: f32 = 0;
+        var flow_count: usize = 0;
+        var occupied_main: f32 = 0;
+        for (children) |child_id| {
+            const child_style = (try self.nodeConstAt(child_id)).style;
+            if (child_style.display == .none or child_style.position == .absolute) continue;
+            flow_count += 1;
+            occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
+        }
+        const free_space = @max(boundedSubtract(available_main, occupied_main), 0);
+        const justify_leading = justifyLeading(style_value.justify_content, free_space, flow_count);
+        const justify_gap = justifyGap(style_value.justify_content, free_space, flow_count);
+
+        var cursor: f32 = justify_leading;
         for (children) |child_id| {
             const child_style = try self.style(child_id);
             if (child_style.display == .none) {
@@ -579,14 +597,25 @@ pub const LayoutTree = struct {
             }
             child_width = clampDimension(child_width, child_style.min_width, child_style.max_width, content_size.width);
             child_height = clampDimension(child_height, child_style.min_height, child_style.max_height, content_size.height);
+
+            const child_align = resolveAlign(child_style.align_self, style_value.align_items);
+            const cross_available = if (style_value.flex_direction == .row) content_size.height else content_size.width;
+            const cross_size = if (style_value.flex_direction == .row) child_height else child_width;
+            const cross_offset = crossAxisOffset(
+                child_align,
+                cross_available,
+                cross_size,
+                child_style.margin,
+                style_value.flex_direction,
+            );
             const child_origin = if (style_value.flex_direction == .row)
                 Point{
                     .x = boundedAdd(boundedAdd(content_origin.x, cursor), child_style.margin.left),
-                    .y = boundedAdd(content_origin.y, child_style.margin.top),
+                    .y = boundedAdd(content_origin.y, cross_offset),
                 }
             else
                 Point{
-                    .x = boundedAdd(content_origin.x, child_style.margin.left),
+                    .x = boundedAdd(content_origin.x, cross_offset),
                     .y = boundedAdd(boundedAdd(content_origin.y, cursor), child_style.margin.top),
                 };
             try self.computeNode(
@@ -602,7 +631,7 @@ pub const LayoutTree = struct {
             const child_layout = try self.readLayout(child_id);
             cursor = boundedAdd(cursor, boundedAdd(
                 if (style_value.flex_direction == .row) child_layout.width else child_layout.height,
-                main_margin,
+                boundedAdd(main_margin, justify_gap),
             ));
         }
     }
@@ -881,6 +910,55 @@ fn marginAlongAxis(edges: Edges, direction: FlexDirection) f32 {
 fn marginAcrossAxis(edges: Edges, direction: FlexDirection) f32 {
     return if (direction == .row) verticalEdges(edges) else horizontalEdges(edges);
 }
+fn resolveAlign(value: AlignSelf, parent: AlignItems) AlignItems {
+    return switch (value) {
+        .auto => parent,
+        .stretch => .stretch,
+        .flex_start => .flex_start,
+        .flex_end => .flex_end,
+        .center => .center,
+    };
+}
+
+fn crossAxisOffset(
+    alignment: AlignItems,
+    available: f32,
+    child_size: f32,
+    edges: Edges,
+    direction: FlexDirection,
+) f32 {
+    const margin_before = if (direction == .row) edges.top else edges.left;
+    const margin_after = if (direction == .row) edges.bottom else edges.right;
+    const margin_box = boundedAdd(child_size, boundedAdd(margin_before, margin_after));
+    const free = @max(boundedSubtract(available, margin_box), 0);
+    const alignment_offset = switch (alignment) {
+        .flex_end => free,
+        .center => free / 2,
+        .flex_start, .stretch => 0,
+    };
+    return boundedAdd(alignment_offset, margin_before);
+}
+
+fn justifyLeading(justify: JustifyContent, free: f32, count: usize) f32 {
+    if (count == 0) return 0;
+    return switch (justify) {
+        .flex_start, .space_between => 0,
+        .flex_end => free,
+        .center => free / 2,
+        .space_around => free / @as(f32, @floatFromInt(count * 2)),
+        .space_evenly => free / @as(f32, @floatFromInt(count + 1)),
+    };
+}
+
+fn justifyGap(justify: JustifyContent, free: f32, count: usize) f32 {
+    if (count < 2 and justify == .space_between) return 0;
+    return switch (justify) {
+        .space_between => free / @as(f32, @floatFromInt(count - 1)),
+        .space_around => free / @as(f32, @floatFromInt(count)),
+        .space_evenly => free / @as(f32, @floatFromInt(count + 1)),
+        .flex_start, .flex_end, .center => 0,
+    };
+}
 
 fn clampFlexMain(value: f32, style: Style, direction: FlexDirection, parent_main: f32) f32 {
     const margin = marginAlongAxis(style.margin, direction);
@@ -1009,6 +1087,12 @@ fn validateEdges(edges: Edges) Error!void {
 fn validateStyle(style: Style) Error!void {
     try validateEdges(style.padding);
     try validateEdges(style.margin);
+    if (@intFromEnum(style.align_items) >= 4 or
+        @intFromEnum(style.align_self) >= 5 or
+        @intFromEnum(style.justify_content) >= 6)
+    {
+        return error.InvalidStyle;
+    }
     if (style.aspect_ratio) |ratio| {
         if (!finite(ratio) or ratio <= 0) return error.InvalidStyle;
     }
@@ -1496,4 +1580,54 @@ test "edges reject non-finite and negative spacing" {
         error.InvalidStyle,
         tree.create(.{ .margin = .{ .top = std.math.inf(f32) } }),
     );
+}
+
+test "flex cross-axis alignment honors container and item overrides" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+        .align_items = .center,
+    });
+    const centered = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+    });
+    const ended = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+        .align_self = .flex_end,
+    });
+    try tree.appendChild(root, centered);
+    try tree.appendChild(root, ended);
+    try tree.compute(root, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(@as(f32, 45), (try tree.readLayout(centered)).y);
+    try std.testing.expectEqual(@as(f32, 90), (try tree.readLayout(ended)).y);
+}
+
+test "flex justification distributes positive main-axis free space" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+        .justify_content = .space_between,
+    });
+    const first = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 } });
+    const second = try tree.create(.{ .width = .{ .length = 20 }, .height = .{ .length = 10 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 0), (try tree.readLayout(first)).x);
+    try std.testing.expectEqual(@as(f32, 80), (try tree.readLayout(second)).x);
+
+    try tree.setStyle(root, .{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+        .justify_content = .center,
+    });
+    try tree.compute(root, .{ .width = 100, .height = 20 });
+    try std.testing.expectEqual(@as(f32, 35), (try tree.readLayout(first)).x);
+    try std.testing.expectEqual(@as(f32, 45), (try tree.readLayout(second)).x);
 }
