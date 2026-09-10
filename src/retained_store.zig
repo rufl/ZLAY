@@ -4,9 +4,8 @@
 //! slice is the node table; the children slice is divided into one fixed-size
 //! bucket per record. No allocator, pointer, or hidden ownership is involved.
 //! IDs contain a slot index and generation, so a destroyed node cannot be
-//! addressed through an older ID. Layout computation remains in
-//! `retained_layout.LayoutTree`; this module only stores the retained state
-//! that an ECS or renderer can own and update.
+//! addressed through an older ID. `StoreSolver` mirrors topology into the
+//! retained layout engine and writes computed boxes back into this storage.
 
 const std = @import("std");
 const retained_layout = @import("retained_layout.zig");
@@ -14,6 +13,9 @@ const retained_layout = @import("retained_layout.zig");
 pub const NodeId = retained_layout.NodeId;
 pub const Style = retained_layout.Style;
 pub const Layout = retained_layout.Layout;
+pub const Dimensions = retained_layout.Dimensions;
+pub const LayoutOptions = retained_layout.Options;
+pub const LayoutError = retained_layout.Error;
 
 pub const Error = error{
     InvalidStorage,
@@ -233,22 +235,30 @@ pub const RetainedStore = struct {
     }
 
     fn destroyInternal(self: *RetainedStore, id: NodeId) Error!void {
-        const index = try self.indexFor(id);
-        const parent_id = self.records[index].parent;
-        if (parent_id) |parent_value| try self.removeChild(parent_value, id);
+        const outer_parent = (try self.get(id)).parent;
+        if (outer_parent) |parent_id| try self.removeChild(parent_id, id);
 
-        while (self.records[index].child_count != 0) {
-            const last = self.records[index].child_count - 1;
-            const child_id = self.childBucket(index)[last];
-            try self.destroyInternal(child_id);
+        var current = id;
+        while (true) {
+            const index = try self.indexFor(current);
+            if (self.records[index].child_count != 0) {
+                const last = self.records[index].child_count - 1;
+                current = self.childBucket(index)[last];
+                continue;
+            }
+
+            const parent_id = self.records[index].parent;
+            if (parent_id) |parent_value| try self.removeChild(parent_value, current);
+            const finished = sameId(current, id);
+            const record = &self.records[index];
+            record.live = false;
+            record.parent = null;
+            record.child_count = 0;
+            record.generation = nextGeneration(record.generation);
+            self.live_count -= 1;
+            if (finished) break;
+            current = parent_id orelse return error.ChildNotFound;
         }
-
-        const record = &self.records[index];
-        record.live = false;
-        record.parent = null;
-        record.child_count = 0;
-        record.generation = nextGeneration(record.generation);
-        self.live_count -= 1;
     }
 
     fn childBucket(self: *const RetainedStore, index: usize) []NodeId {
@@ -276,6 +286,135 @@ pub const RetainedStore = struct {
 // `Store` is the concise spelling used by callers that only need one retained
 // storage instance; the descriptive name remains the canonical declaration.
 pub const Store = RetainedStore;
+
+/// Solver bridge for caller-owned `RetainedStore` records.
+///
+/// `mirror_ids` is caller-owned mapping storage with one entry per record.
+/// The internal layout tree is allocated once; repeated stable computes reuse
+/// its node and child capacities. Store topology, styles, and resulting layouts
+/// remain authoritative.
+pub const StoreSolver = struct {
+    tree: retained_layout.LayoutTree,
+    mirror_ids: []NodeId,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        mirror_ids: []NodeId,
+        options: LayoutOptions,
+    ) LayoutError!StoreSolver {
+        var normalized = options;
+        normalized.max_nodes = mirror_ids.len;
+        var result = StoreSolver{
+            .tree = retained_layout.LayoutTree.init(allocator, normalized),
+            .mirror_ids = mirror_ids,
+        };
+        errdefer result.tree.deinit();
+        for (mirror_ids) |*mirror_id| {
+            mirror_id.* = try result.tree.create(.{ .display = .none });
+        }
+        return result;
+    }
+
+    pub fn deinit(self: *StoreSolver) void {
+        self.tree.deinit();
+        self.* = undefined;
+    }
+
+    pub fn compute(
+        self: *StoreSolver,
+        store: *RetainedStore,
+        root_id: NodeId,
+        available: Dimensions,
+    ) (Error || LayoutError)!void {
+        if (store.records.len != self.mirror_ids.len) return error.InvalidStorage;
+        const root_index = try store.indexFor(root_id);
+
+        // Detach before rebuilding so reparenting and ordering changes are
+        // accepted regardless of record traversal order. ArrayList capacities
+        // remain allocated and are reused by subsequent computes.
+        for (self.mirror_ids) |mirror_parent| {
+            while (try self.tree.childCount(mirror_parent) != 0) {
+                const last = try self.tree.childCount(mirror_parent) - 1;
+                const mirror_child = try self.tree.childAt(mirror_parent, last);
+                try self.tree.removeChild(mirror_parent, mirror_child);
+            }
+        }
+
+        for (store.records, 0..) |record, index| {
+            try self.tree.setStyle(
+                self.mirror_ids[index],
+                if (record.live) record.style else .{ .display = .none },
+            );
+        }
+        for (store.records, 0..) |record, index| {
+            if (!record.live) continue;
+            for (store.childBucket(index)[0..record.child_count]) |child_id| {
+                const child_index = try store.indexFor(child_id);
+                try self.tree.appendChild(self.mirror_ids[index], self.mirror_ids[child_index]);
+            }
+        }
+
+        try self.tree.compute(self.mirror_ids[root_index], available);
+        for (store.records, 0..) |record, index| {
+            if (!record.live or !try belongsToSubtree(store, index, root_id)) continue;
+            store.records[index].layout = try self.tree.readLayout(self.mirror_ids[index]);
+        }
+    }
+
+    fn belongsToSubtree(store: *const RetainedStore, index: usize, root_id: NodeId) Error!bool {
+        var current = NodeId{
+            .index = @intCast(index),
+            .generation = store.records[index].generation,
+        };
+        while (true) {
+            if (RetainedStore.sameId(current, root_id)) return true;
+            current = (try store.parent(current)) orelse return false;
+        }
+    }
+};
+
+test "store solver writes layouts back from caller-owned topology" {
+    var records: [4]NodeRecord = undefined;
+    var children_storage: [16]NodeId = undefined;
+    var store = try RetainedStore.init(&records, &children_storage);
+    const root = try store.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 50 },
+    });
+    const first = try store.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 10 },
+    });
+    const second = try store.create(.{
+        .width = .{ .length = 30 },
+        .height = .{ .length = 12 },
+    });
+    const unrelated = try store.create(.{});
+    try store.appendChild(root, first);
+    try store.appendChild(root, second);
+    try store.setLayout(unrelated, .{ .x = 777 });
+
+    var mirror_ids: [4]NodeId = undefined;
+    var solver = try StoreSolver.init(
+        std.testing.allocator,
+        &mirror_ids,
+        .{ .max_children_per_node = 4 },
+    );
+    defer solver.deinit();
+    try solver.compute(&store, root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(Layout{ .width = 100, .height = 50 }, try store.layout(root));
+    try std.testing.expectEqual(Layout{ .width = 20, .height = 10 }, try store.layout(first));
+    try std.testing.expectEqual(Layout{ .x = 20, .width = 30, .height = 12 }, try store.layout(second));
+    try std.testing.expectEqual(@as(f32, 777), (try store.layout(unrelated)).x);
+
+    try store.setStyle(root, .{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 50 },
+        .flex_direction = .column,
+    });
+    try solver.compute(&store, root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(Layout{ .y = 10, .width = 30, .height = 12 }, try store.layout(second));
+}
 
 test "caller-owned records support create lookup and update" {
     var records: [2]NodeRecord = undefined;

@@ -35,9 +35,10 @@ pub const Display = enum { flex, grid, none, overlay };
 pub const Position = enum { relative, absolute };
 pub const FlexDirection = enum { row, column };
 pub const Direction = enum { ltr, rtl };
-pub const FlexWrap = enum { nowrap, wrap };
-pub const AlignItems = enum { stretch, flex_start, flex_end, center };
-pub const AlignSelf = enum { auto, stretch, flex_start, flex_end, center };
+pub const FlexWrap = enum { nowrap, wrap, wrap_reverse };
+pub const GridAutoFlow = enum { row, column };
+pub const AlignItems = enum { stretch, flex_start, flex_end, center, baseline };
+pub const AlignSelf = enum { auto, stretch, flex_start, flex_end, center, baseline };
 /// A nine-position anchor used by overlay children.
 pub const Alignment = enum {
     top_left,
@@ -51,6 +52,7 @@ pub const Alignment = enum {
     bottom_right,
 };
 pub const JustifyContent = enum { flex_start, flex_end, center, space_between, space_around, space_evenly };
+pub const AlignContent = enum { stretch, flex_start, flex_end, center, space_between, space_around, space_evenly };
 pub const Overflow = enum { visible, clip };
 
 /// Horizontal and vertical fractions for an overlay anchor.
@@ -130,6 +132,9 @@ pub const GridTrack = union(enum) {
     }
 };
 pub const Dimension = union(enum) {
+    min_content,
+    max_content,
+    fit_content,
     auto,
     length: f32,
     percent: f32,
@@ -179,6 +184,12 @@ pub const Edges = struct {
         return .{ .top = value, .right = value, .bottom = value, .left = value };
     }
 };
+pub const AutoEdges = struct {
+    top: bool = false,
+    right: bool = false,
+    bottom: bool = false,
+    left: bool = false,
+};
 
 pub const Style = struct {
     display: Display = .flex,
@@ -191,6 +202,7 @@ pub const Style = struct {
     /// Anchor used when this node is a relative child of an overlay parent.
     alignment: Alignment = .top_left,
     justify_content: JustifyContent = .flex_start,
+    align_content: AlignContent = .flex_start,
     width: Dimension = .auto,
     height: Dimension = .auto,
     min_width: Dimension = .{ .length = 0 },
@@ -203,6 +215,9 @@ pub const Style = struct {
     bottom: Dimension = .auto,
     padding: Edges = .{},
     margin: Edges = .{},
+    auto_margin: AutoEdges = .{},
+    /// Baseline offset from the node's top edge. Null uses its bottom edge.
+    baseline: ?f32 = null,
     flex_grow: f32 = 0,
     /// Zero preserves the original no-shrink behavior; set nonzero for flex shrinking.
     flex_shrink: f32 = 0,
@@ -214,6 +229,9 @@ pub const Style = struct {
     grid_column_gap: f32 = 0,
     grid_row_gap: f32 = 0,
     grid_gap: f32 = 0,
+    grid_auto_flow: GridAutoFlow = .row,
+    grid_auto_columns: GridTrack = .auto,
+    grid_auto_rows: GridTrack = .auto,
     /// Minimum spacing between flex items and between wrapped lines.
     flex_gap: f32 = 0,
     /// Optional typed flex gap. When set, this takes precedence over `flex_gap`.
@@ -221,6 +239,14 @@ pub const Style = struct {
     /// Optional lower and upper bounds for the typed flex gap.
     min_flex_gap_spec: ?Gap = null,
     max_flex_gap_spec: ?Gap = null,
+    /// Axis-specific typed gaps. These override `flex_gap_spec` for flex
+    /// containers and the corresponding numeric grid gap for grids.
+    column_gap_spec: ?Gap = null,
+    row_gap_spec: ?Gap = null,
+    min_column_gap_spec: ?Gap = null,
+    max_column_gap_spec: ?Gap = null,
+    min_row_gap_spec: ?Gap = null,
+    max_row_gap_spec: ?Gap = null,
     /// One-based explicit placement. Zero means auto-placement.
     grid_column: usize = 0,
     grid_row: usize = 0,
@@ -293,6 +319,12 @@ const Node = struct {
     flex_size: f32 = 0,
     flex_frozen: bool = false,
     dirty: bool = true,
+    has_computed_layout: bool = false,
+    last_origin: Point = .{},
+    last_containing: Dimensions = .{},
+    last_forced_size: ?Dimensions = null,
+    last_is_root: bool = false,
+    last_inherited_clip: ?ClipRect = null,
 };
 
 const Slot = struct {
@@ -305,6 +337,7 @@ pub const LayoutTree = struct {
     options: Options,
     slots: std.ArrayList(Slot) = .empty,
     live_count: usize = 0,
+    incremental: bool = false,
 
     pub fn init(allocator: std.mem.Allocator, options: Options) LayoutTree {
         return .{ .allocator = allocator, .options = options };
@@ -424,30 +457,30 @@ pub const LayoutTree = struct {
     }
 
     pub fn compute(self: *LayoutTree, root_id: NodeId, available: Dimensions) Error!void {
-        try validateDimensions(available);
-        _ = try self.nodeAt(root_id);
-        self.computeNode(root_id, .{}, available, null, true, null, null, null) catch |err| return err;
+        try self.computeInternal(root_id, available, false, null, null);
     }
 
-    /// Recomputes the complete subtree rooted at the supplied node's topmost
-    /// attached ancestor.
+    /// Recomputes only dirty branches whose cached inputs remain valid.
     ///
-    /// Layout dependencies flow through containers: a descendant mutation can
-    /// change its parent's size, positioning, clipping, or sibling
-    /// distribution. A descendant-only pass is therefore not safe. This API
-    /// conservatively walks to the root and performs the same full computation
-    /// as `compute`; `available` is the containing size for that root.
-    ///
-    /// The supplied node need not currently be dirty. This deliberately
-    /// preserves `compute` semantics when the available root dimensions have
-    /// changed, while still providing one entry point for dirty propagation.
+    /// Dirty state propagates to ancestors, so dependency-bearing containers
+    /// are revisited. Clean siblings are skipped when their origin, containing
+    /// dimensions, forced size, root status, and inherited clip are unchanged.
+    /// A changed dependency invalidates that cache and recomputes the sibling.
     pub fn computeDirty(self: *LayoutTree, dirty_id: NodeId, available: Dimensions) Error!void {
-        try validateDimensions(available);
-        var root_id = dirty_id;
-        while ((try self.nodeConstAt(root_id)).parent) |parent_id| {
-            root_id = parent_id;
-        }
-        try self.compute(root_id, available);
+        const root_id = try self.topmostAncestor(dirty_id);
+        try self.computeInternal(root_id, available, true, null, null);
+    }
+
+    /// Dirty-subtree recomputation with intrinsic leaf measurement.
+    pub fn computeDirtyWithMeasure(
+        self: *LayoutTree,
+        dirty_id: NodeId,
+        available: Dimensions,
+        measure: IntrinsicMeasureFunction,
+        user_data: ?*anyopaque,
+    ) Error!void {
+        const root_id = try self.topmostAncestor(dirty_id);
+        try self.computeInternal(root_id, available, true, measure, user_data);
     }
 
     /// Compute layout using caller-supplied intrinsic minimum, preferred, and
@@ -478,9 +511,7 @@ pub const LayoutTree = struct {
         measure: IntrinsicMeasureFunction,
         user_data: ?*anyopaque,
     ) Error!void {
-        try validateDimensions(available);
-        _ = try self.nodeAt(root_id);
-        self.computeNode(root_id, .{}, available, null, true, null, measure, user_data) catch |err| return err;
+        try self.computeInternal(root_id, available, false, measure, user_data);
     }
 
     pub fn readLayout(self: *const LayoutTree, id: NodeId) Error!Layout {
@@ -494,6 +525,39 @@ pub const LayoutTree = struct {
 
     pub fn getLayout(self: *const LayoutTree, id: NodeId) Error!Layout {
         return self.readLayout(id);
+    }
+
+    fn topmostAncestor(self: *const LayoutTree, id: NodeId) Error!NodeId {
+        var root_id = id;
+        while ((try self.nodeConstAt(root_id)).parent) |parent_id| {
+            root_id = parent_id;
+        }
+        return root_id;
+    }
+
+    fn computeInternal(
+        self: *LayoutTree,
+        root_id: NodeId,
+        available: Dimensions,
+        incremental: bool,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
+    ) Error!void {
+        try validateDimensions(available);
+        _ = try self.nodeAt(root_id);
+        const previous_incremental = self.incremental;
+        self.incremental = incremental;
+        defer self.incremental = previous_incremental;
+        try self.computeNode(
+            root_id,
+            .{},
+            available,
+            null,
+            true,
+            null,
+            measure,
+            measure_user_data,
+        );
     }
 
     fn destroyInternal(self: *LayoutTree, id: NodeId) Error!void {
@@ -561,6 +625,23 @@ pub const LayoutTree = struct {
     ) Error!void {
         try self.validateComputeDepth(id);
         const node_ref = try self.nodeAt(id);
+        if (self.incremental and
+            !node_ref.dirty and
+            node_ref.has_computed_layout and
+            std.meta.eql(node_ref.last_origin, origin) and
+            std.meta.eql(node_ref.last_containing, containing) and
+            std.meta.eql(node_ref.last_forced_size, forced_size) and
+            node_ref.last_is_root == is_root and
+            std.meta.eql(node_ref.last_inherited_clip, inherited_clip))
+        {
+            return;
+        }
+        node_ref.has_computed_layout = true;
+        node_ref.last_origin = origin;
+        node_ref.last_containing = containing;
+        node_ref.last_forced_size = forced_size;
+        node_ref.last_is_root = is_root;
+        node_ref.last_inherited_clip = inherited_clip;
         const style_value = node_ref.style;
         if (style_value.display == .none) {
             try self.hideNode(id);
@@ -575,7 +656,7 @@ pub const LayoutTree = struct {
         var intrinsic_measurement = supplied_measurement;
         var intrinsic_tiers = supplied_tiers;
         if (intrinsic_measurement == null and measure != null and children.len == 0 and
-            (style_value.width == .auto or style_value.height == .auto))
+            (needsIntrinsicMeasurement(style_value.width) or needsIntrinsicMeasurement(style_value.height)))
         {
             const measured = measure.?(id, containing, measure_user_data);
             try validateDimensions(measured);
@@ -592,14 +673,28 @@ pub const LayoutTree = struct {
                 size.width,
                 size.height,
                 ratio,
-                style_value.width == .auto,
-                style_value.height == .auto,
+                needsIntrinsicMeasurement(style_value.width),
+                needsIntrinsicMeasurement(style_value.height),
             );
         }
         if (forced_size == null) {
             if (intrinsic_measurement) |measured| {
-                if (style_value.width == .auto) size.width = measured.width;
-                if (style_value.height == .auto) size.height = measured.height;
+                size.width = resolveContentDimension(
+                    style_value.width,
+                    containing.width,
+                    size.width,
+                    measured,
+                    intrinsic_tiers,
+                    true,
+                );
+                size.height = resolveContentDimension(
+                    style_value.height,
+                    containing.height,
+                    size.height,
+                    measured,
+                    intrinsic_tiers,
+                    false,
+                );
             }
         }
         size.width = clampDimensionWithIntrinsic(
@@ -608,7 +703,7 @@ pub const LayoutTree = struct {
             style_value.max_width,
             containing.width,
             intrinsic_tiers,
-            style_value.width == .auto,
+            needsIntrinsicMeasurement(style_value.width),
             true,
         );
         size.height = clampDimensionWithIntrinsic(
@@ -617,7 +712,7 @@ pub const LayoutTree = struct {
             style_value.max_height,
             containing.height,
             intrinsic_tiers,
-            style_value.height == .auto,
+            needsIntrinsicMeasurement(style_value.height),
             false,
         );
 
@@ -655,14 +750,21 @@ pub const LayoutTree = struct {
             const child_node = try self.nodeAt(child_id);
             const child_style = child_node.style;
             child_node.flex_frozen = child_style.display == .none or child_style.position == .absolute;
-            child_node.intrinsic_measurement = null;
-            child_node.intrinsic_tiers = null;
-            if (!child_node.flex_frozen and measure != null and child_node.children.items.len == 0 and
-                (child_style.width == .auto or child_style.height == .auto))
+            if (!child_node.flex_frozen and
+                (needsIntrinsicMeasurement(child_style.width) or needsIntrinsicMeasurement(child_style.height)))
             {
-                const measured = measure.?(child_id, content_size, measure_user_data);
-                try validateDimensions(measured);
-                child_node.intrinsic_measurement = measured;
+                if (child_node.children.items.len != 0) {
+                    child_node.intrinsic_measurement = try self.preferredNodeSize(
+                        child_id,
+                        content_size,
+                        measure,
+                        measure_user_data,
+                    );
+                } else if (child_node.intrinsic_measurement == null and measure != null) {
+                    const measured = measure.?(child_id, content_size, measure_user_data);
+                    try validateDimensions(measured);
+                    child_node.intrinsic_measurement = measured;
+                }
             }
             if (child_node.flex_frozen) continue;
             child_node.flex_base = boundedAdd(
@@ -672,8 +774,9 @@ pub const LayoutTree = struct {
                     available_main,
                     if (style_value.flex_direction == .row) content_size.height else content_size.width,
                     child_node.intrinsic_measurement,
+                    child_node.intrinsic_tiers,
                 ),
-                marginAlongAxis(child_style.margin, style_value.flex_direction),
+                mainMargin(child_style, style_value.flex_direction),
             );
             child_node.flex_size = child_node.flex_base;
         }
@@ -686,7 +789,7 @@ pub const LayoutTree = struct {
                 flow_base = boundedAdd(flow_base, (try self.nodeConstAt(child_id)).flex_base);
             }
         }
-        const flex_gap = resolveFlexGap(
+        const flex_gap = resolveFlexMainGap(
             style_value,
             available_main,
             flow_base,
@@ -696,7 +799,7 @@ pub const LayoutTree = struct {
             flex_gap * @as(f32, @floatFromInt(flow_count - 1))
         else
             0;
-        if (style_value.flex_wrap == .wrap) {
+        if (style_value.flex_wrap != .nowrap) {
             try self.computeFlexWrap(
                 id,
                 content_origin,
@@ -777,16 +880,37 @@ pub const LayoutTree = struct {
         }
 
         var occupied_main: f32 = 0;
+        var auto_margin_count: usize = 0;
         for (children) |child_id| {
             const child_style = (try self.nodeConstAt(child_id)).style;
             if (child_style.display == .none or child_style.position == .absolute) continue;
             occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
+            auto_margin_count += autoMainMarginCount(child_style, style_value.flex_direction);
         }
         const free_space = @max(boundedSubtract(available_main, boundedAdd(occupied_main, flex_gap_total)), 0);
-        const justify_leading = justifyLeading(style_value.justify_content, free_space, flow_count);
-        const justify_gap = boundedAdd(flex_gap, justifyGap(style_value.justify_content, free_space, flow_count));
+        const auto_margin_share = if (auto_margin_count == 0)
+            0
+        else
+            free_space / @as(f32, @floatFromInt(auto_margin_count));
+        const justify_leading = if (auto_margin_count == 0)
+            justifyLeading(style_value.justify_content, free_space, flow_count)
+        else
+            0;
+        const justify_gap = boundedAdd(
+            flex_gap,
+            if (auto_margin_count == 0) justifyGap(style_value.justify_content, free_space, flow_count) else 0,
+        );
 
         var cursor: f32 = justify_leading;
+        const cross_available = if (style_value.flex_direction == .row) content_size.height else content_size.width;
+        const line_baseline = try self.flexLineBaseline(
+            children,
+            0,
+            children.len,
+            cross_available,
+            style_value.flex_direction,
+            style_value.align_items,
+        );
         for (children) |child_id| {
             const child_style = try self.style(child_id);
             if (child_style.display == .none) {
@@ -800,14 +924,19 @@ pub const LayoutTree = struct {
 
             const child_node = try self.nodeConstAt(child_id);
             const child_measurement = child_node.intrinsic_measurement;
-            const main_margin = marginAlongAxis(child_style.margin, style_value.flex_direction);
-            const cross_margin = marginAcrossAxis(child_style.margin, style_value.flex_direction);
+            const resolved_margin = resolvedMainMarginEdges(
+                child_style,
+                style_value.flex_direction,
+                auto_margin_share,
+            );
+            const box_main_margin = mainMargin(child_style, style_value.flex_direction);
+            const resolved_main_margin = marginAlongAxis(resolved_margin, style_value.flex_direction);
+            const cross_margin = crossMargin(child_style, style_value.flex_direction);
             const child_align = resolveAlign(child_style.align_self, style_value.align_items);
-            const cross_available = if (style_value.flex_direction == .row) content_size.height else content_size.width;
             var child_width = resolveDimension(child_style.width, content_size.width, 0);
             var child_height = resolveDimension(child_style.height, content_size.height, 0);
             if (style_value.flex_direction == .row) {
-                child_width = boundedSubtract(child_node.flex_size, main_margin);
+                child_width = boundedSubtract(child_node.flex_size, box_main_margin);
                 if (child_style.height == .auto) {
                     child_height = if (child_align == .stretch)
                         boundedSubtract(cross_available, cross_margin)
@@ -817,7 +946,7 @@ pub const LayoutTree = struct {
                         boundedSubtract(content_size.height, cross_margin);
                 }
             } else {
-                child_height = boundedSubtract(child_node.flex_size, main_margin);
+                child_height = boundedSubtract(child_node.flex_size, box_main_margin);
                 if (child_style.width == .auto) {
                     child_width = if (child_align == .stretch)
                         boundedSubtract(cross_available, cross_margin)
@@ -836,6 +965,16 @@ pub const LayoutTree = struct {
                 child_style.width == .auto,
                 true,
             );
+            if (try self.remeasureLeafAtWidth(
+                child_id,
+                child_style,
+                child_width,
+                content_size,
+                measure,
+                measure_user_data,
+            )) |remeasured| {
+                child_height = remeasured.height;
+            }
             child_height = clampDimensionWithIntrinsic(
                 child_height,
                 child_style.min_height,
@@ -850,8 +989,9 @@ pub const LayoutTree = struct {
                 child_align,
                 cross_available,
                 cross_size,
-                child_style.margin,
+                child_style,
                 style_value.flex_direction,
+                line_baseline,
             );
             const child_origin = if (style_value.flex_direction == .row)
                 Point{
@@ -860,7 +1000,7 @@ pub const LayoutTree = struct {
                         content_size.width,
                         cursor,
                         child_width,
-                        child_style.margin,
+                        resolved_margin,
                         style_value.direction,
                     ),
                     .y = boundedAdd(content_origin.y, cross_offset),
@@ -868,7 +1008,7 @@ pub const LayoutTree = struct {
             else
                 Point{
                     .x = boundedAdd(content_origin.x, cross_offset),
-                    .y = boundedAdd(boundedAdd(content_origin.y, cursor), child_style.margin.top),
+                    .y = boundedAdd(boundedAdd(content_origin.y, cursor), resolved_margin.top),
                 };
             try self.computeNode(
                 child_id,
@@ -883,7 +1023,7 @@ pub const LayoutTree = struct {
             const child_layout = try self.readLayout(child_id);
             cursor = boundedAdd(cursor, boundedAdd(
                 if (style_value.flex_direction == .row) child_layout.width else child_layout.height,
-                boundedAdd(main_margin, justify_gap),
+                boundedAdd(resolved_main_margin, justify_gap),
             ));
         }
     }
@@ -904,7 +1044,44 @@ pub const LayoutTree = struct {
         const available_main = if (direction == .row) content_size.width else content_size.height;
         const cross_parent = if (direction == .row) content_size.height else content_size.width;
         var line_start: usize = 0;
-        var cross_cursor: f32 = 0;
+        var line_count: usize = 0;
+        var occupied_cross: f32 = 0;
+        var scan_start: usize = 0;
+        while (scan_start < children.len) {
+            const scan_style = (try self.nodeConstAt(children[scan_start])).style;
+            if (scan_style.display == .none or scan_style.position == .absolute) {
+                scan_start += 1;
+                continue;
+            }
+            const scan_end = try self.flexLineEnd(children, scan_start, available_main, gap);
+            try self.resolveFlexLine(children, scan_start, scan_end, available_main, gap, direction);
+            occupied_cross = boundedAdd(
+                occupied_cross,
+                try self.flexLineCrossSize(children, scan_start, scan_end, cross_parent, direction, style_value.align_items),
+            );
+            line_count += 1;
+            scan_start = scan_end;
+        }
+        const cross_gap = resolveFlexCrossGap(
+            style_value,
+            cross_parent,
+            occupied_cross,
+            line_count,
+        );
+        const total_cross_gap = cross_gap * @as(f32, @floatFromInt(line_count -| 1));
+        const free_cross = @max(
+            boundedSubtract(cross_parent, boundedAdd(occupied_cross, total_cross_gap)),
+            0,
+        );
+        var cross_cursor = alignContentLeading(style_value.align_content, free_cross, line_count);
+        const distributed_cross_gap = boundedAdd(
+            cross_gap,
+            alignContentGap(style_value.align_content, free_cross, line_count),
+        );
+        const stretched_line_cross = if (style_value.align_content == .stretch and line_count != 0)
+            free_cross / @as(f32, @floatFromInt(line_count))
+        else
+            0;
 
         while (line_start < children.len) {
             const child_style = (try self.nodeConstAt(children[line_start])).style;
@@ -929,28 +1106,54 @@ pub const LayoutTree = struct {
 
             const line_end = try self.flexLineEnd(children, line_start, available_main, gap);
             try self.resolveFlexLine(children, line_start, line_end, available_main, gap, direction);
-            const line_cross = try self.flexLineCrossSize(
+            var line_cross = try self.flexLineCrossSize(
                 children,
                 line_start,
                 line_end,
                 cross_parent,
                 direction,
+                style_value.align_items,
             );
+            line_cross = boundedAdd(line_cross, stretched_line_cross);
             var flow_count: usize = 0;
             var occupied_main: f32 = 0;
+            var line_auto_margin_count: usize = 0;
             for (children[line_start..line_end]) |child_id| {
                 const item_style = (try self.nodeConstAt(child_id)).style;
                 if (item_style.display == .none or item_style.position == .absolute) continue;
                 flow_count += 1;
                 occupied_main = boundedAdd(occupied_main, (try self.nodeConstAt(child_id)).flex_size);
+                line_auto_margin_count += autoMainMarginCount(item_style, direction);
             }
             const total_gap = if (flow_count > 1)
                 gap * @as(f32, @floatFromInt(flow_count - 1))
             else
                 0;
             const free_space = @max(boundedSubtract(available_main, boundedAdd(occupied_main, total_gap)), 0);
-            const justify_leading = justifyLeading(style_value.justify_content, free_space, flow_count);
-            const justify_gap = boundedAdd(gap, justifyGap(style_value.justify_content, free_space, flow_count));
+            const line_auto_margin_share = if (line_auto_margin_count == 0)
+                0
+            else
+                free_space / @as(f32, @floatFromInt(line_auto_margin_count));
+            const justify_leading = if (line_auto_margin_count == 0)
+                justifyLeading(style_value.justify_content, free_space, flow_count)
+            else
+                0;
+            const justify_gap = boundedAdd(
+                gap,
+                if (line_auto_margin_count == 0) justifyGap(style_value.justify_content, free_space, flow_count) else 0,
+            );
+            const line_baseline = try self.flexLineBaseline(
+                children,
+                line_start,
+                line_end,
+                cross_parent,
+                direction,
+                style_value.align_items,
+            );
+            const line_cross_origin = if (style_value.flex_wrap == .wrap_reverse)
+                @max(boundedSubtract(cross_parent, boundedAdd(cross_cursor, line_cross)), 0)
+            else
+                cross_cursor;
             var cursor = justify_leading;
             for (children[line_start..line_end]) |child_id| {
                 const item_style = try self.style(child_id);
@@ -978,22 +1181,24 @@ pub const LayoutTree = struct {
                     inherited_clip,
                     direction,
                     style_value.direction,
-                    cross_cursor,
+                    line_cross_origin,
                     line_cross,
                     cursor,
-
                     measure,
                     measure_user_data,
                     style_value.align_items,
+                    line_auto_margin_share,
+                    line_baseline,
                 );
                 const child_layout = try self.readLayout(child_id);
-                const main_margin = marginAlongAxis(item_style.margin, direction);
+                const main_margin = mainMargin(item_style, direction) +
+                    @as(f32, @floatFromInt(autoMainMarginCount(item_style, direction))) * line_auto_margin_share;
                 cursor = boundedAdd(cursor, boundedAdd(
                     if (direction == .row) child_layout.width else child_layout.height,
                     boundedAdd(main_margin, justify_gap),
                 ));
             }
-            cross_cursor = boundedAdd(cross_cursor, boundedAdd(line_cross, gap));
+            cross_cursor = boundedAdd(cross_cursor, boundedAdd(line_cross, distributed_cross_gap));
             line_start = line_end;
         }
     }
@@ -1122,8 +1327,11 @@ pub const LayoutTree = struct {
         end: usize,
         cross_parent: f32,
         direction: FlexDirection,
+        container_align: AlignItems,
     ) Error!f32 {
         var result: f32 = 0;
+        var line_baseline: f32 = 0;
+        var line_descent: f32 = 0;
         for (children[start..end]) |child_id| {
             const item_node = try self.nodeConstAt(child_id);
             const item_style = item_node.style;
@@ -1145,10 +1353,56 @@ pub const LayoutTree = struct {
                 dimension == .auto,
                 direction != .row,
             );
-            result = @max(result, boundedAdd(cross_size, marginAcrossAxis(item_style.margin, direction)));
+            if (direction == .row and resolveAlign(item_style.align_self, container_align) == .baseline) {
+                const before = if (item_style.auto_margin.top) 0 else item_style.margin.top;
+                const after = if (item_style.auto_margin.bottom) 0 else item_style.margin.bottom;
+                const item_baseline = baselineOffset(item_style, cross_size);
+                line_baseline = @max(line_baseline, boundedAdd(before, item_baseline));
+                line_descent = @max(line_descent, boundedAdd(after, boundedSubtract(cross_size, item_baseline)));
+            } else {
+                result = @max(result, boundedAdd(cross_size, crossMargin(item_style, direction)));
+            }
         }
+        return @max(result, boundedAdd(line_baseline, line_descent));
+    }
 
-        return result;
+    fn flexLineBaseline(
+        self: *LayoutTree,
+        children: []const NodeId,
+        start: usize,
+        end: usize,
+        cross_parent: f32,
+        direction: FlexDirection,
+        container_align: AlignItems,
+    ) Error!?f32 {
+        if (direction != .row) return null;
+        var found = false;
+        var result: f32 = 0;
+        for (children[start..end]) |child_id| {
+            const item_node = try self.nodeConstAt(child_id);
+            const item_style = item_node.style;
+            if (item_style.display == .none or item_style.position == .absolute or
+                resolveAlign(item_style.align_self, container_align) != .baseline)
+            {
+                continue;
+            }
+            const measurement = item_node.intrinsic_measurement;
+            var height = resolveDimension(item_style.height, cross_parent, 0);
+            if (item_style.height == .auto and measurement != null) height = measurement.?.height;
+            height = clampDimensionWithIntrinsic(
+                height,
+                item_style.min_height,
+                item_style.max_height,
+                cross_parent,
+                item_node.intrinsic_tiers,
+                item_style.height == .auto,
+                false,
+            );
+            const margin_top = if (item_style.auto_margin.top) 0 else item_style.margin.top;
+            result = @max(result, boundedAdd(margin_top, baselineOffset(item_style, height)));
+            found = true;
+        }
+        return if (found) result else null;
     }
 
     fn computeFlexWrapChild(
@@ -1166,11 +1420,14 @@ pub const LayoutTree = struct {
         measure: ?IntrinsicMeasureFunction,
         measure_user_data: ?*anyopaque,
         container_align: AlignItems,
+        auto_margin_share: f32,
+        line_baseline: ?f32,
     ) Error!void {
         const child_node = try self.nodeConstAt(child_id);
         const measurement = child_node.intrinsic_measurement;
-        const main_margin = marginAlongAxis(child_style.margin, direction);
-        const cross_margin = marginAcrossAxis(child_style.margin, direction);
+        const resolved_margin = resolvedMainMarginEdges(child_style, direction, auto_margin_share);
+        const main_margin = mainMargin(child_style, direction);
+        const cross_margin = crossMargin(child_style, direction);
         const child_align = resolveAlign(child_style.align_self, container_align);
         var child_width = resolveDimension(child_style.width, content_size.width, 0);
         var child_height = resolveDimension(child_style.height, content_size.height, 0);
@@ -1204,6 +1461,16 @@ pub const LayoutTree = struct {
             child_style.width == .auto,
             true,
         );
+        if (try self.remeasureLeafAtWidth(
+            child_id,
+            child_style,
+            child_width,
+            content_size,
+            measure,
+            measure_user_data,
+        )) |remeasured| {
+            child_height = remeasured.height;
+        }
         child_height = clampDimensionWithIntrinsic(
             child_height,
             child_style.min_height,
@@ -1218,8 +1485,9 @@ pub const LayoutTree = struct {
             child_align,
             line_cross,
             cross_size,
-            child_style.margin,
+            child_style,
             direction,
+            line_baseline,
         );
         const child_origin = if (direction == .row)
             Point{
@@ -1228,7 +1496,7 @@ pub const LayoutTree = struct {
                     content_size.width,
                     cursor,
                     child_width,
-                    child_style.margin,
+                    resolved_margin,
                     layout_direction,
                 ),
                 .y = boundedAdd(boundedAdd(content_origin.y, cross_cursor), cross_offset),
@@ -1236,7 +1504,7 @@ pub const LayoutTree = struct {
         else
             Point{
                 .x = boundedAdd(boundedAdd(content_origin.x, cross_cursor), cross_offset),
-                .y = boundedAdd(boundedAdd(content_origin.y, cursor), child_style.margin.top),
+                .y = boundedAdd(boundedAdd(content_origin.y, cursor), resolved_margin.top),
             };
         try self.computeNode(
             child_id,
@@ -1284,14 +1552,19 @@ pub const LayoutTree = struct {
             }
 
             const child_node = try self.nodeAt(child_id);
-            child_node.intrinsic_measurement = null;
-            child_node.intrinsic_tiers = null;
-            if (measure != null and child_node.children.items.len == 0 and
-                (child_style.width == .auto or child_style.height == .auto))
-            {
-                const measured = measure.?(child_id, size, measure_user_data);
-                try validateDimensions(measured);
-                child_node.intrinsic_measurement = measured;
+            if (child_style.width == .auto or child_style.height == .auto) {
+                if (child_node.children.items.len != 0) {
+                    child_node.intrinsic_measurement = try self.preferredNodeSize(
+                        child_id,
+                        size,
+                        measure,
+                        measure_user_data,
+                    );
+                } else if (child_node.intrinsic_measurement == null and measure != null) {
+                    const measured = measure.?(child_id, size, measure_user_data);
+                    try validateDimensions(measured);
+                    child_node.intrinsic_measurement = measured;
+                }
             }
 
             var child_size = Dimensions{
@@ -1311,6 +1584,16 @@ pub const LayoutTree = struct {
                 child_style.width == .auto,
                 true,
             );
+            if (try self.remeasureLeafAtWidth(
+                child_id,
+                child_style,
+                child_size.width,
+                size,
+                measure,
+                measure_user_data,
+            )) |remeasured| {
+                child_size.height = remeasured.height;
+            }
             child_size.height = clampDimensionWithIntrinsic(
                 child_size.height,
                 child_style.min_height,
@@ -1367,37 +1650,45 @@ pub const LayoutTree = struct {
     ) Error!void {
         const node_ref = try self.nodeAt(id);
         const style_value = node_ref.style;
-        const columns = style_value.grid_columns;
-        const rows = style_value.grid_rows;
-        const column_gap = effectiveGap(style_value.grid_column_gap, style_value.grid_gap);
-        const row_gap = effectiveGap(style_value.grid_row_gap, style_value.grid_gap);
         const children = node_ref.children.items;
+        const track_limit = @min(self.options.max_grid_tracks, max_supported_grid_tracks);
+        var column_storage: [max_supported_grid_tracks]GridTrack = undefined;
+        var row_storage: [max_supported_grid_tracks]GridTrack = undefined;
+        var column_count = style_value.grid_columns.len;
+        var row_count = style_value.grid_rows.len;
+        @memcpy(column_storage[0..column_count], style_value.grid_columns);
+        @memcpy(row_storage[0..row_count], style_value.grid_rows);
 
         for (children) |child_id| {
             (try self.nodeAt(child_id)).grid_placement = null;
-        }
-        // Assign and validate explicit placements before auto-placement so an
-        // automatic item cannot consume a cell reserved by a later item.
-        for (children) |child_id| {
             const child_style = try self.style(child_id);
             if (child_style.display == .none or child_style.position == .absolute) continue;
-            const has_column = child_style.grid_column != 0;
-            const has_row = child_style.grid_row != 0;
-            if (has_column != has_row) return error.InvalidStyle;
-            if (has_column) {
-                if (child_style.grid_column > columns.len or child_style.grid_row > rows.len) {
-                    return error.InvalidStyle;
+            if (child_style.grid_column != 0) {
+                const required = child_style.grid_column - 1 + child_style.grid_column_span;
+                while (column_count < required) {
+                    try appendImplicitTrack(
+                        &column_storage,
+                        &column_count,
+                        style_value.grid_auto_columns,
+                        track_limit,
+                    );
                 }
-                const column = child_style.grid_column - 1;
-                const row = child_style.grid_row - 1;
-                if (child_style.grid_column_span > columns.len - column or
-                    child_style.grid_row_span > rows.len - row)
-                {
-                    return error.InvalidStyle;
+            }
+            if (child_style.grid_row != 0) {
+                const required = child_style.grid_row - 1 + child_style.grid_row_span;
+                while (row_count < required) {
+                    try appendImplicitTrack(
+                        &row_storage,
+                        &row_count,
+                        style_value.grid_auto_rows,
+                        track_limit,
+                    );
                 }
+            }
+            if (child_style.grid_column != 0 and child_style.grid_row != 0) {
                 (try self.nodeAt(child_id)).grid_placement = .{
-                    .column = column,
-                    .row = row,
+                    .column = child_style.grid_column - 1,
+                    .row = child_style.grid_row - 1,
                     .column_span = child_style.grid_column_span,
                     .row_span = child_style.grid_row_span,
                 };
@@ -1412,36 +1703,93 @@ pub const LayoutTree = struct {
         }
 
         var auto_cursor: usize = 0;
-        const cell_count = columns.len * rows.len;
-        // Resolve every placement before measuring. Auto-track contributions
-        // must see intrinsic children in both explicit and automatic cells.
         for (children) |child_id| {
             const child_style = try self.style(child_id);
             if (child_style.display == .none or child_style.position == .absolute) continue;
-            var placement = (try self.nodeConstAt(child_id)).grid_placement;
-            if (placement == null) {
-                while (auto_cursor < cell_count) : (auto_cursor += 1) {
-                    const candidate = GridPlacement{
-                        .column = auto_cursor % columns.len,
-                        .row = auto_cursor / columns.len,
+            if ((try self.nodeConstAt(child_id)).grid_placement != null) continue;
+            var placement: ?GridPlacement = null;
+            var search: usize = 0;
+            while (placement == null) {
+                var candidate: GridPlacement = undefined;
+                if (child_style.grid_row != 0) {
+                    while (search + child_style.grid_column_span > column_count) {
+                        try appendImplicitTrack(
+                            &column_storage,
+                            &column_count,
+                            style_value.grid_auto_columns,
+                            track_limit,
+                        );
+                    }
+                    candidate = .{
+                        .column = search,
+                        .row = child_style.grid_row - 1,
                         .column_span = child_style.grid_column_span,
                         .row_span = child_style.grid_row_span,
                     };
-                    if (candidate.column + candidate.column_span > columns.len or
-                        candidate.row + candidate.row_span > rows.len)
-                    {
-                        continue;
+                    search += 1;
+                } else if (child_style.grid_column != 0) {
+                    while (search + child_style.grid_row_span > row_count) {
+                        try appendImplicitTrack(
+                            &row_storage,
+                            &row_count,
+                            style_value.grid_auto_rows,
+                            track_limit,
+                        );
                     }
-                    if (!(try self.gridRegionOccupied(children, candidate))) {
-                        placement = candidate;
-                        break;
+                    candidate = .{
+                        .column = child_style.grid_column - 1,
+                        .row = search,
+                        .column_span = child_style.grid_column_span,
+                        .row_span = child_style.grid_row_span,
+                    };
+                    search += 1;
+                } else {
+                    while (auto_cursor >= column_count * row_count) {
+                        if (style_value.grid_auto_flow == .row) {
+                            try appendImplicitTrack(
+                                &row_storage,
+                                &row_count,
+                                style_value.grid_auto_rows,
+                                track_limit,
+                            );
+                        } else {
+                            try appendImplicitTrack(
+                                &column_storage,
+                                &column_count,
+                                style_value.grid_auto_columns,
+                                track_limit,
+                            );
+                        }
                     }
+                    candidate = if (style_value.grid_auto_flow == .row)
+                        .{
+                            .column = auto_cursor % column_count,
+                            .row = auto_cursor / column_count,
+                            .column_span = child_style.grid_column_span,
+                            .row_span = child_style.grid_row_span,
+                        }
+                    else
+                        .{
+                            .column = auto_cursor / row_count,
+                            .row = auto_cursor % row_count,
+                            .column_span = child_style.grid_column_span,
+                            .row_span = child_style.grid_row_span,
+                        };
+                    auto_cursor += 1;
                 }
-                if (placement == null) return error.InvalidStyle;
-                (try self.nodeAt(child_id)).grid_placement = placement;
-                auto_cursor += 1;
+                if (candidate.column + candidate.column_span > column_count or
+                    candidate.row + candidate.row_span > row_count)
+                {
+                    continue;
+                }
+                if (!(try self.gridRegionOccupied(children, candidate))) placement = candidate;
             }
+            (try self.nodeAt(child_id)).grid_placement = placement;
         }
+        const columns = column_storage[0..column_count];
+        const rows = row_storage[0..row_count];
+        const column_gap = resolveGridGap(style_value, .column, size.width, columns);
+        const row_gap = resolveGridGap(style_value, .row, size.height, rows);
         // Measure after placement so auto tracks can use all available
         // intrinsic contributions, including children auto-placed later.
         for (children) |child_id| {
@@ -1455,14 +1803,19 @@ pub const LayoutTree = struct {
                 continue;
             }
             const child_node = try self.nodeAt(child_id);
-            child_node.intrinsic_measurement = null;
-            child_node.intrinsic_tiers = null;
-            if (measure != null and child_node.children.items.len == 0 and
-                (child_style.width == .auto or child_style.height == .auto))
-            {
-                const measured = measure.?(child_id, size, measure_user_data);
-                try validateDimensions(measured);
-                child_node.intrinsic_measurement = measured;
+            if (child_style.width == .auto or child_style.height == .auto) {
+                if (child_node.children.items.len != 0) {
+                    child_node.intrinsic_measurement = try self.preferredNodeSize(
+                        child_id,
+                        size,
+                        measure,
+                        measure_user_data,
+                    );
+                } else if (child_node.intrinsic_measurement == null and measure != null) {
+                    const measured = measure.?(child_id, size, measure_user_data);
+                    try validateDimensions(measured);
+                    child_node.intrinsic_measurement = measured;
+                }
             }
         }
         for (children) |child_id| {
@@ -1495,10 +1848,55 @@ pub const LayoutTree = struct {
                 child_width = boundedSubtract(child_width, horizontalEdges(child_style.margin));
                 child_height = boundedSubtract(child_height, verticalEdges(child_style.margin));
             }
-            const child_x = boundedAdd(
-                boundedAdd(origin.x, try self.gridTrackOffset(columns, resolved_placement.column, size.width, column_gap, children, true)),
-                child_style.margin.left,
+            child_width = clampDimensionWithIntrinsic(
+                child_width,
+                child_style.min_width,
+                child_style.max_width,
+                size.width,
+                child_node.intrinsic_tiers,
+                child_style.width == .auto,
+                true,
             );
+            if (try self.remeasureLeafAtWidth(
+                child_id,
+                child_style,
+                child_width,
+                size,
+                measure,
+                measure_user_data,
+            )) |remeasured| {
+                child_height = remeasured.height;
+            }
+            child_height = clampDimensionWithIntrinsic(
+                child_height,
+                child_style.min_height,
+                child_style.max_height,
+                size.height,
+                child_node.intrinsic_tiers,
+                child_style.height == .auto,
+                false,
+            );
+            const column_offset = try self.gridTrackOffset(
+                columns,
+                resolved_placement.column,
+                size.width,
+                column_gap,
+                children,
+                true,
+            );
+            const child_x = if (style_value.direction == .rtl)
+                boundedAdd(
+                    origin.x,
+                    @max(
+                        boundedSubtract(
+                            boundedSubtract(size.width, column_offset),
+                            boundedAdd(child_width, child_style.margin.right),
+                        ),
+                        0,
+                    ),
+                )
+            else
+                boundedAdd(boundedAdd(origin.x, column_offset), child_style.margin.left);
             const child_y = boundedAdd(
                 boundedAdd(origin.y, try self.gridTrackOffset(rows, resolved_placement.row, size.height, row_gap, children, false)),
                 child_style.margin.top,
@@ -1771,17 +2169,50 @@ pub const LayoutTree = struct {
             );
         }
         const node_ref = try self.nodeAt(id);
-        node_ref.intrinsic_measurement = null;
-        node_ref.intrinsic_tiers = null;
-        if (measure != null and node_ref.children.items.len == 0 and
-            (style_value.width == .auto or style_value.height == .auto))
-        {
-            const measured = measure.?(id, containing, measure_user_data);
-            try validateDimensions(measured);
-            node_ref.intrinsic_measurement = measured;
-            if (style_value.width == .auto) width = measured.width;
-            if (style_value.height == .auto) height = measured.height;
+        if (style_value.width == .auto or style_value.height == .auto) {
+            const measured = if (node_ref.children.items.len != 0)
+                try self.preferredNodeSize(id, containing, measure, measure_user_data)
+            else if (node_ref.intrinsic_measurement) |cached|
+                cached
+            else if (measure) |measure_fn| blk: {
+                const value = measure_fn(id, containing, measure_user_data);
+                try validateDimensions(value);
+                node_ref.intrinsic_measurement = value;
+                break :blk value;
+            } else null;
+            if (measured) |value| {
+                if (style_value.width == .auto) width = value.width;
+                if (style_value.height == .auto) height = value.height;
+            }
         }
+        width = clampDimensionWithIntrinsic(
+            width,
+            style_value.min_width,
+            style_value.max_width,
+            containing.width,
+            node_ref.intrinsic_tiers,
+            style_value.width == .auto,
+            true,
+        );
+        if (try self.remeasureLeafAtWidth(
+            id,
+            style_value,
+            width,
+            containing,
+            measure,
+            measure_user_data,
+        )) |remeasured| {
+            height = remeasured.height;
+        }
+        height = clampDimensionWithIntrinsic(
+            height,
+            style_value.min_height,
+            style_value.max_height,
+            containing.height,
+            node_ref.intrinsic_tiers,
+            style_value.height == .auto,
+            false,
+        );
         const x_offset = if (left) |value|
             boundedAdd(value, style_value.margin.left)
         else if (right) |value|
@@ -1810,6 +2241,161 @@ pub const LayoutTree = struct {
             measure,
             measure_user_data,
         );
+    }
+
+    fn remeasureLeafAtWidth(
+        self: *LayoutTree,
+        id: NodeId,
+        style_value: Style,
+        width: f32,
+        available: Dimensions,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
+    ) Error!?Dimensions {
+        if (style_value.height != .auto or measure == null) return null;
+        const node_ref = try self.nodeAt(id);
+        if (node_ref.children.items.len != 0) return null;
+        const previous = node_ref.intrinsic_measurement orelse return null;
+        if (width >= previous.width) return null;
+
+        const remeasured = measure.?(
+            id,
+            .{ .width = width, .height = available.height },
+            measure_user_data,
+        );
+        try validateDimensions(remeasured);
+        node_ref.intrinsic_measurement = remeasured;
+        return remeasured;
+    }
+
+    fn preferredNodeSize(
+        self: *LayoutTree,
+        id: NodeId,
+        containing: Dimensions,
+        measure: ?IntrinsicMeasureFunction,
+        measure_user_data: ?*anyopaque,
+    ) Error!Dimensions {
+        try self.validateComputeDepth(id);
+        const node = try self.nodeConstAt(id);
+        const style_value = node.style;
+        if (style_value.display == .none) return .{};
+        const children = node.children.items;
+
+        var content = Dimensions{};
+        var flow_count: usize = 0;
+        if (children.len == 0) {
+            if (measure != null and
+                (style_value.width == .auto or style_value.height == .auto))
+            {
+                const measured = measure.?(id, containing, measure_user_data);
+                try validateDimensions(measured);
+                (try self.nodeAt(id)).intrinsic_measurement = measured;
+                content = measured;
+            }
+        } else {
+            for (children) |child_id| {
+                const child_style = try self.style(child_id);
+                if (child_style.display == .none or child_style.position == .absolute) continue;
+                const child_size = try self.preferredNodeSize(
+                    child_id,
+                    containing,
+                    measure,
+                    measure_user_data,
+                );
+                const outer_width = boundedAdd(child_size.width, horizontalEdges(child_style.margin));
+                const outer_height = boundedAdd(child_size.height, verticalEdges(child_style.margin));
+                flow_count += 1;
+                switch (style_value.display) {
+                    .flex => if (style_value.flex_direction == .row) {
+                        content.width = boundedAdd(content.width, outer_width);
+                        content.height = @max(content.height, outer_height);
+                    } else {
+                        content.width = @max(content.width, outer_width);
+                        content.height = boundedAdd(content.height, outer_height);
+                    },
+                    .overlay => {
+                        content.width = @max(content.width, outer_width);
+                        content.height = @max(content.height, outer_height);
+                    },
+                    .grid => {},
+                    .none => unreachable,
+                }
+            }
+
+            if (style_value.display == .flex and flow_count > 1) {
+                const main_content = if (style_value.flex_direction == .row)
+                    content.width
+                else
+                    content.height;
+                const parent_main = if (style_value.flex_direction == .row)
+                    containing.width
+                else
+                    containing.height;
+                const gap = resolveFlexMainGap(style_value, parent_main, main_content, flow_count);
+                const total_gap = gap * @as(f32, @floatFromInt(flow_count - 1));
+                if (style_value.flex_direction == .row) {
+                    content.width = boundedAdd(content.width, total_gap);
+                } else {
+                    content.height = boundedAdd(content.height, total_gap);
+                }
+            }
+            if (style_value.display == .grid) {
+                content.width = intrinsicGridTracks(
+                    style_value.grid_columns,
+                    resolveGridGap(
+                        style_value,
+                        .column,
+                        containing.width,
+                        style_value.grid_columns,
+                    ),
+                );
+                content.height = intrinsicGridTracks(
+                    style_value.grid_rows,
+                    resolveGridGap(
+                        style_value,
+                        .row,
+                        containing.height,
+                        style_value.grid_rows,
+                    ),
+                );
+            }
+        }
+
+        const auto_width = boundedAdd(content.width, horizontalEdges(style_value.padding));
+        const auto_height = boundedAdd(content.height, verticalEdges(style_value.padding));
+        var result = Dimensions{
+            .width = intrinsicResolvedDimension(style_value.width, containing.width, auto_width),
+            .height = intrinsicResolvedDimension(style_value.height, containing.height, auto_height),
+        };
+        if (style_value.aspect_ratio) |ratio| {
+            result = aspectRatioDimension(
+                result.width,
+                result.height,
+                ratio,
+                style_value.width == .auto,
+                style_value.height == .auto,
+            );
+        }
+        result.width = clampDimensionWithIntrinsic(
+            result.width,
+            style_value.min_width,
+            style_value.max_width,
+            containing.width,
+            (try self.nodeConstAt(id)).intrinsic_tiers,
+            style_value.width == .auto,
+            true,
+        );
+        result.height = clampDimensionWithIntrinsic(
+            result.height,
+            style_value.min_height,
+            style_value.max_height,
+            containing.height,
+            (try self.nodeConstAt(id)).intrinsic_tiers,
+            style_value.height == .auto,
+            false,
+        );
+        (try self.nodeAt(id)).intrinsic_measurement = result;
+        return result;
     }
 
     fn hideNode(self: *LayoutTree, id: NodeId) Error!void {
@@ -1916,6 +2502,49 @@ fn marginAlongAxis(edges: Edges, direction: FlexDirection) f32 {
 fn marginAcrossAxis(edges: Edges, direction: FlexDirection) f32 {
     return if (direction == .row) verticalEdges(edges) else horizontalEdges(edges);
 }
+
+fn mainMargin(style: Style, direction: FlexDirection) f32 {
+    const before = if (direction == .row)
+        (if (style.auto_margin.left) 0 else style.margin.left)
+    else
+        (if (style.auto_margin.top) 0 else style.margin.top);
+    const after = if (direction == .row)
+        (if (style.auto_margin.right) 0 else style.margin.right)
+    else
+        (if (style.auto_margin.bottom) 0 else style.margin.bottom);
+    return boundedAdd(before, after);
+}
+
+fn crossMargin(style: Style, direction: FlexDirection) f32 {
+    const before = if (direction == .row)
+        (if (style.auto_margin.top) 0 else style.margin.top)
+    else
+        (if (style.auto_margin.left) 0 else style.margin.left);
+    const after = if (direction == .row)
+        (if (style.auto_margin.bottom) 0 else style.margin.bottom)
+    else
+        (if (style.auto_margin.right) 0 else style.margin.right);
+    return boundedAdd(before, after);
+}
+
+fn autoMainMarginCount(style: Style, direction: FlexDirection) usize {
+    if (direction == .row) {
+        return @intFromBool(style.auto_margin.left) + @intFromBool(style.auto_margin.right);
+    }
+    return @intFromBool(style.auto_margin.top) + @intFromBool(style.auto_margin.bottom);
+}
+
+fn resolvedMainMarginEdges(style: Style, direction: FlexDirection, share: f32) Edges {
+    var result = style.margin;
+    if (direction == .row) {
+        if (style.auto_margin.left) result.left = share;
+        if (style.auto_margin.right) result.right = share;
+    } else {
+        if (style.auto_margin.top) result.top = share;
+        if (style.auto_margin.bottom) result.bottom = share;
+    }
+    return result;
+}
 fn resolveAlign(value: AlignSelf, parent: AlignItems) AlignItems {
     return switch (value) {
         .auto => parent,
@@ -1923,6 +2552,7 @@ fn resolveAlign(value: AlignSelf, parent: AlignItems) AlignItems {
         .flex_start => .flex_start,
         .flex_end => .flex_end,
         .center => .center,
+        .baseline => .baseline,
     };
 }
 
@@ -1950,19 +2580,42 @@ fn crossAxisOffset(
     alignment: AlignItems,
     available: f32,
     child_size: f32,
-    edges: Edges,
+    style: Style,
     direction: FlexDirection,
+    line_baseline: ?f32,
 ) f32 {
-    const margin_before = if (direction == .row) edges.top else edges.left;
-    const margin_after = if (direction == .row) edges.bottom else edges.right;
+    const before_auto = if (direction == .row) style.auto_margin.top else style.auto_margin.left;
+    const after_auto = if (direction == .row) style.auto_margin.bottom else style.auto_margin.right;
+    const margin_before = if (before_auto)
+        0
+    else if (direction == .row)
+        style.margin.top
+    else
+        style.margin.left;
+    const margin_after = if (after_auto)
+        0
+    else if (direction == .row)
+        style.margin.bottom
+    else
+        style.margin.right;
     const margin_box = boundedAdd(child_size, boundedAdd(margin_before, margin_after));
     const free = @max(boundedSubtract(available, margin_box), 0);
+    if (before_auto and after_auto) return boundedAdd(margin_before, free / 2);
+    if (before_auto) return boundedAdd(margin_before, free);
+    if (after_auto) return margin_before;
+    if (alignment == .baseline and direction == .row and line_baseline != null) {
+        return @max(boundedSubtract(line_baseline.?, baselineOffset(style, child_size)), 0);
+    }
     const alignment_offset = switch (alignment) {
         .flex_end => free,
         .center => free / 2,
-        .flex_start, .stretch => 0,
+        .flex_start, .stretch, .baseline => 0,
     };
     return boundedAdd(alignment_offset, margin_before);
+}
+
+fn baselineOffset(style: Style, height: f32) f32 {
+    return @min(style.baseline orelse height, height);
 }
 
 fn justifyLeading(justify: JustifyContent, free: f32, count: usize) f32 {
@@ -1988,6 +2641,29 @@ fn justifyGap(justify: JustifyContent, free: f32, count: usize) f32 {
     };
 }
 
+fn alignContentLeading(alignment: AlignContent, free: f32, count: usize) f32 {
+    if (count == 0) return 0;
+    const count_float = @as(f32, @floatFromInt(count));
+    return switch (alignment) {
+        .stretch, .flex_start, .space_between => 0,
+        .flex_end => free,
+        .center => free / 2,
+        .space_around => free / count_float / 2,
+        .space_evenly => free / (count_float + 1),
+    };
+}
+
+fn alignContentGap(alignment: AlignContent, free: f32, count: usize) f32 {
+    if (count == 0 or (count < 2 and alignment == .space_between)) return 0;
+    const count_float = @as(f32, @floatFromInt(count));
+    return switch (alignment) {
+        .space_between => free / @as(f32, @floatFromInt(count - 1)),
+        .space_around => free / count_float,
+        .space_evenly => free / (count_float + 1),
+        .stretch, .flex_start, .flex_end, .center => 0,
+    };
+}
+
 fn clampFlexMain(
     value: f32,
     style: Style,
@@ -1995,7 +2671,7 @@ fn clampFlexMain(
     parent_main: f32,
     intrinsic_tiers: ?IntrinsicDimensions,
 ) f32 {
-    const margin = marginAlongAxis(style.margin, direction);
+    const margin = mainMargin(style, direction);
     const box_value = boundedSubtract(value, margin);
     const clamped = if (direction == .row)
         clampDimensionWithIntrinsic(box_value, style.min_width, style.max_width, parent_main, intrinsic_tiers, style.width == .auto, true)
@@ -2051,8 +2727,22 @@ fn flexBaseDimension(
     main_parent: f32,
     cross_parent: f32,
     intrinsic_measurement: ?Dimensions,
+    intrinsic_tiers: ?IntrinsicDimensions,
 ) f32 {
     const main_dimension = if (direction == .row) style.width else style.height;
+    const basis = if (style.flex_basis != .auto) style.flex_basis else main_dimension;
+    if (intrinsic_measurement) |measured| {
+        if (needsIntrinsicMeasurement(basis)) {
+            return resolveContentDimension(
+                basis,
+                main_parent,
+                if (direction == .row) measured.width else measured.height,
+                measured,
+                intrinsic_tiers,
+                direction == .row,
+            );
+        }
+    }
     if (style.flex_basis != .auto) {
         return switch (style.flex_basis) {
             .stretch => 0,
@@ -2066,9 +2756,6 @@ fn flexBaseDimension(
             const resolved = if (direction == .row) cross * ratio else cross / ratio;
             return if (finite(resolved)) @max(resolved, 0) else std.math.floatMax(f32);
         }
-    }
-    if (intrinsic_measurement) |measured| {
-        if (main_dimension == .auto) return if (direction == .row) measured.width else measured.height;
     }
     return switch (main_dimension) {
         .stretch => 0,
@@ -2100,24 +2787,97 @@ fn weightedShare(available: f32, factor: f32, total: f32) f32 {
     return if (finite(result)) result else 0;
 }
 
+const GapAxis = enum {
+    column,
+    row,
+};
 fn effectiveGap(specific: f32, shared: f32) f32 {
     return if (specific != 0) specific else shared;
 }
-/// Resolves a typed gap once for a flex container. Stretch gaps share the
-/// remaining space equally across the gaps; the factor is reserved for
-/// future competing gap specs, since one style has only one repeated spec.
-fn resolveFlexGap(style: Style, parent: f32, occupied: f32, item_count: usize) f32 {
-    const spec = style.flex_gap_spec orelse return style.flex_gap;
+
+fn axisGapSpec(style: Style, axis: GapAxis) ?Gap {
+    return switch (axis) {
+        .column => style.column_gap_spec,
+        .row => style.row_gap_spec,
+    };
+}
+
+fn axisMinGapSpec(style: Style, axis: GapAxis) ?Gap {
+    return switch (axis) {
+        .column => style.min_column_gap_spec,
+        .row => style.min_row_gap_spec,
+    };
+}
+
+fn axisMaxGapSpec(style: Style, axis: GapAxis) ?Gap {
+    return switch (axis) {
+        .column => style.max_column_gap_spec,
+        .row => style.max_row_gap_spec,
+    };
+}
+
+fn resolveTypedGap(
+    spec: ?Gap,
+    minimum: ?Gap,
+    maximum: ?Gap,
+    fallback: f32,
+    parent: f32,
+    occupied: f32,
+    item_count: usize,
+) f32 {
+    const gap_spec = spec orelse return fallback;
     const gap_count = item_count -| 1;
     const remaining = @max(boundedSubtract(parent, occupied), 0);
-    var result = resolveGapValue(spec, parent, remaining, gap_count);
-    if (style.min_flex_gap_spec) |minimum| {
-        result = @max(result, resolveGapValue(minimum, parent, remaining, gap_count));
+    var result = resolveGapValue(gap_spec, parent, remaining, gap_count);
+    if (minimum) |value| {
+        result = @max(result, resolveGapValue(value, parent, remaining, gap_count));
     }
-    if (style.max_flex_gap_spec) |maximum| {
-        result = @min(result, resolveGapValue(maximum, parent, remaining, gap_count));
+    if (maximum) |value| {
+        result = @min(result, resolveGapValue(value, parent, remaining, gap_count));
     }
     return if (finite(result)) @max(result, 0) else std.math.floatMax(f32);
+}
+
+fn resolveFlexMainGap(style: Style, parent: f32, occupied: f32, item_count: usize) f32 {
+    const axis: GapAxis = if (style.flex_direction == .row) .column else .row;
+    return resolveTypedGap(
+        axisGapSpec(style, axis) orelse style.flex_gap_spec,
+        axisMinGapSpec(style, axis) orelse style.min_flex_gap_spec,
+        axisMaxGapSpec(style, axis) orelse style.max_flex_gap_spec,
+        style.flex_gap,
+        parent,
+        occupied,
+        item_count,
+    );
+}
+
+fn resolveFlexCrossGap(style: Style, parent: f32, occupied: f32, line_count: usize) f32 {
+    const axis: GapAxis = if (style.flex_direction == .row) .row else .column;
+    return resolveTypedGap(
+        axisGapSpec(style, axis) orelse style.flex_gap_spec,
+        axisMinGapSpec(style, axis) orelse style.min_flex_gap_spec,
+        axisMaxGapSpec(style, axis) orelse style.max_flex_gap_spec,
+        style.flex_gap,
+        parent,
+        occupied,
+        line_count,
+    );
+}
+
+fn resolveGridGap(style: Style, axis: GapAxis, parent: f32, tracks: []const GridTrack) f32 {
+    const fallback = switch (axis) {
+        .column => effectiveGap(style.grid_column_gap, style.grid_gap),
+        .row => effectiveGap(style.grid_row_gap, style.grid_gap),
+    };
+    return resolveTypedGap(
+        axisGapSpec(style, axis),
+        axisMinGapSpec(style, axis),
+        axisMaxGapSpec(style, axis),
+        fallback,
+        parent,
+        intrinsicGridTracks(tracks, 0),
+        tracks.len,
+    );
 }
 
 fn resolveGapValue(spec: Gap, parent: f32, remaining: f32, gap_count: usize) f32 {
@@ -2139,6 +2899,26 @@ fn gridPlacementsOverlap(left: GridPlacement, right: GridPlacement) bool {
         right.row < left.row + left.row_span;
 }
 
+fn appendImplicitTrack(
+    storage: *[max_supported_grid_tracks]GridTrack,
+    count: *usize,
+    track: GridTrack,
+    limit: usize,
+) Error!void {
+    if (count.* >= limit) return error.GridTrackCapacityExceeded;
+    storage[count.*] = track;
+    count.* += 1;
+}
+
+fn validateGridTrack(track: GridTrack) Error!void {
+    switch (track) {
+        .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
+        .auto => {},
+        .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
+        .bounded => |bounds| if (!finite(bounds.min) or !finite(bounds.max) or bounds.min < 0 or bounds.max < bounds.min) return error.InvalidStyle,
+    }
+}
+
 fn validateGridCapacity(style: Style, options: Options) Error!void {
     if (style.display != .grid) return;
     if (style.grid_columns.len == 0 or style.grid_rows.len == 0) return error.InvalidStyle;
@@ -2152,6 +2932,30 @@ fn validateDimensions(value: Dimensions) Error!void {
     if (!finite(value.width) or !finite(value.height) or value.width < 0 or value.height < 0) {
         return error.InvalidDimensions;
     }
+}
+fn intrinsicResolvedDimension(dimension: Dimension, parent: f32, auto_value: f32) f32 {
+    return switch (dimension) {
+        .auto, .min_content, .max_content, .fit_content => auto_value,
+        .length => |value| value,
+        .percent => |value| boundedCoordinate(parent * value),
+        // Stretch has no intrinsic contribution; the parent distributes it.
+        .stretch => 0,
+    };
+}
+
+fn intrinsicGridTracks(tracks: []const GridTrack, gap: f32) f32 {
+    var total: f32 = 0;
+    for (tracks) |track| {
+        total = boundedAdd(total, switch (track) {
+            .fixed => |value| value,
+            .bounded => |bounds| bounds.min,
+            .auto, .fr => 0,
+        });
+    }
+    if (tracks.len > 1) {
+        total = boundedAdd(total, gap * @as(f32, @floatFromInt(tracks.len - 1)));
+    }
+    return total;
 }
 
 fn validateIntrinsicDimensions(value: IntrinsicDimensions) Error!void {
@@ -2185,28 +2989,37 @@ fn validateStyle(style: Style) Error!void {
     try validateEdges(style.padding);
     try validateEdges(style.margin);
     try validateGapSpec(style.flex_gap_spec);
+    try validateGapSpec(style.column_gap_spec);
+    try validateGapSpec(style.row_gap_spec);
+    try validateGapSpec(style.min_column_gap_spec);
+    try validateGapSpec(style.max_column_gap_spec);
+    try validateGapSpec(style.min_row_gap_spec);
+    try validateGapSpec(style.max_row_gap_spec);
     try validateGapSpec(style.min_flex_gap_spec);
     try validateGapSpec(style.max_flex_gap_spec);
     if (@intFromEnum(style.direction) >= 2 or
-        @intFromEnum(style.flex_wrap) >= 2 or
-        @intFromEnum(style.align_items) >= 4 or
-        @intFromEnum(style.align_self) >= 5 or
+        @intFromEnum(style.grid_auto_flow) >= 2 or
+        @intFromEnum(style.flex_wrap) >= 3 or
+        @intFromEnum(style.align_items) >= 5 or
+        @intFromEnum(style.align_self) >= 6 or
         @intFromEnum(style.alignment) >= 9 or
-        @intFromEnum(style.justify_content) >= 6)
+        @intFromEnum(style.justify_content) >= 6 or
+        @intFromEnum(style.align_content) >= 7)
     {
         return error.InvalidStyle;
     }
     if (style.aspect_ratio) |ratio| {
         if (!finite(ratio) or ratio <= 0) return error.InvalidStyle;
     }
+    if (style.baseline) |baseline| {
+        if (!finite(baseline) or baseline < 0) return error.InvalidStyle;
+    }
     if (!finite(style.flex_grow) or style.flex_grow < 0 or
         !finite(style.flex_shrink) or style.flex_shrink < 0)
     {
         return error.InvalidStyle;
     }
-    if ((style.grid_column == 0) != (style.grid_row == 0) or
-        style.grid_column_span == 0 or style.grid_row_span == 0)
-    {
+    if (style.grid_column_span == 0 or style.grid_row_span == 0) {
         return error.InvalidStyle;
     }
     if (!finite(style.grid_column_gap) or style.grid_column_gap < 0 or
@@ -2216,19 +3029,10 @@ fn validateStyle(style: Style) Error!void {
     {
         return error.InvalidStyle;
     }
-    for (style.grid_columns) |track| switch (track) {
-        .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
-        .auto => {},
-        .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
-        .bounded => |bounds| if (!finite(bounds.min) or !finite(bounds.max) or bounds.min < 0 or bounds.max < bounds.min) return error.InvalidStyle,
-    };
-    for (style.grid_rows) |track| switch (track) {
-        .fixed => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
-        .auto => {},
-        .fr => |value| if (!finite(value) or value <= 0) return error.InvalidStyle,
-        .bounded => |bounds| if (!finite(bounds.min) or !finite(bounds.max) or bounds.min < 0 or bounds.max < bounds.min) return error.InvalidStyle,
-    };
-    if ((style.grid_column == 0) != (style.grid_row == 0)) return error.InvalidStyle;
+    for (style.grid_columns) |track| try validateGridTrack(track);
+    for (style.grid_rows) |track| try validateGridTrack(track);
+    try validateGridTrack(style.grid_auto_columns);
+    try validateGridTrack(style.grid_auto_rows);
     const dimensions = [_]Dimension{
         style.width,
         style.height,
@@ -2243,7 +3047,7 @@ fn validateStyle(style: Style) Error!void {
         style.bottom,
     };
     for (dimensions) |dimension| switch (dimension) {
-        .auto => {},
+        .auto, .min_content, .max_content, .fit_content => {},
         .length => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
         .percent => |value| if (!finite(value) or value < 0) return error.InvalidStyle,
         .stretch => |factor| if (!finite(factor) or factor <= 0) return error.InvalidStyle,
@@ -2259,6 +3063,21 @@ fn measureIntrinsic(_: NodeId, _: Dimensions, user_data: ?*anyopaque) Dimensions
     const probe: *IntrinsicProbe = @ptrCast(@alignCast(user_data.?));
     probe.calls += 1;
     return probe.dimensions;
+}
+
+const WrappingIntrinsicProbe = struct {
+    calls: usize = 0,
+    last_width: f32 = 0,
+};
+
+fn measureWrappingIntrinsic(_: NodeId, available: Dimensions, user_data: ?*anyopaque) Dimensions {
+    const probe: *WrappingIntrinsicProbe = @ptrCast(@alignCast(user_data.?));
+    probe.calls += 1;
+    probe.last_width = available.width;
+    return if (available.width < 80)
+        .{ .width = available.width, .height = 30 }
+    else
+        .{ .width = 80, .height = 10 };
 }
 
 fn measureInvalidIntrinsic(_: NodeId, _: Dimensions, _: ?*anyopaque) Dimensions {
@@ -2298,7 +3117,7 @@ fn measureNegativeIntrinsicTier(_: NodeId, _: Dimensions, _: ?*anyopaque) Intrin
 
 fn resolveDimension(dimension: Dimension, parent: f32, auto_value: f32) f32 {
     return switch (dimension) {
-        .auto => auto_value,
+        .auto, .min_content, .max_content, .fit_content => auto_value,
         .length => |value| value,
         .percent => |value| parent * value,
         // Outside a flex distribution pass, stretch fills the available axis.
@@ -2306,9 +3125,42 @@ fn resolveDimension(dimension: Dimension, parent: f32, auto_value: f32) f32 {
     };
 }
 
+fn needsIntrinsicMeasurement(dimension: Dimension) bool {
+    return switch (dimension) {
+        .auto, .min_content, .max_content, .fit_content => true,
+        .length, .percent, .stretch => false,
+    };
+}
+
+fn resolveContentDimension(
+    dimension: Dimension,
+    parent: f32,
+    fallback: f32,
+    measurement: Dimensions,
+    tiers: ?IntrinsicDimensions,
+    horizontal: bool,
+) f32 {
+    const preferred = if (horizontal) measurement.width else measurement.height;
+    const minimum = if (tiers) |values|
+        (if (horizontal) values.min.width else values.min.height)
+    else
+        preferred;
+    const maximum = if (tiers) |values|
+        (if (horizontal) values.max.width else values.max.height)
+    else
+        preferred;
+    return switch (dimension) {
+        .auto => preferred,
+        .min_content => minimum,
+        .max_content => maximum,
+        .fit_content => @min(maximum, @max(minimum, parent)),
+        .length, .percent, .stretch => fallback,
+    };
+}
+
 fn insetValue(dimension: Dimension, parent: f32) ?f32 {
     return switch (dimension) {
-        .auto => null,
+        .auto, .min_content, .max_content, .fit_content => null,
         .length => |value| value,
         .percent => |value| parent * value,
         // Stretch is a size, not an inset.
@@ -2366,6 +3218,28 @@ test "intrinsic tier measurement uses preferred auto size" {
     try std.testing.expectEqual(Layout{ .width = 23, .height = 19 }, try tree.readLayout(child));
 }
 
+test "content sizing keywords select intrinsic tiers" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 5 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 20 },
+        .align_items = .flex_start,
+    });
+    const minimum = try tree.create(.{ .width = .min_content, .height = .{ .length = 10 } });
+    const maximum = try tree.create(.{ .width = .max_content, .height = .{ .length = 10 } });
+    const fitted = try tree.create(.{ .width = .fit_content, .height = .{ .length = 10 } });
+    try tree.appendChild(root, minimum);
+    try tree.appendChild(root, maximum);
+    try tree.appendChild(root, fitted);
+
+    var probe = IntrinsicTierProbe{};
+    try tree.computeWithMeasureTiers(root, .{ .width = 100, .height = 20 }, measureIntrinsicTiersForTest, &probe);
+    try std.testing.expectEqual(@as(f32, 10), (try tree.readLayout(minimum)).width);
+    try std.testing.expectEqual(@as(f32, 50), (try tree.readLayout(maximum)).width);
+    try std.testing.expectEqual(@as(f32, 50), (try tree.readLayout(fitted)).width);
+}
+
 test "intrinsic tier measurement clamps flex size to min and max" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
     defer tree.deinit();
@@ -2418,6 +3292,29 @@ test "intrinsic measurement sizes auto leaf dimensions" {
     try std.testing.expectEqual(Layout{ .width = 23, .height = 19 }, try tree.readLayout(child));
 }
 
+test "intrinsic leaf remeasures height after flex shrink narrows width" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 80 },
+        .align_items = .flex_start,
+    });
+    const fixed = try tree.create(.{
+        .width = .{ .length = 60 },
+        .height = .{ .length = 10 },
+    });
+    const wrapping = try tree.create(.{ .flex_shrink = 1 });
+    try tree.appendChild(root, fixed);
+    try tree.appendChild(root, wrapping);
+
+    var probe = WrappingIntrinsicProbe{};
+    try tree.computeWithMeasure(root, .{ .width = 100, .height = 80 }, measureWrappingIntrinsic, &probe);
+    try std.testing.expectEqual(@as(usize, 2), probe.calls);
+    try std.testing.expectEqual(@as(f32, 40), probe.last_width);
+    try std.testing.expectEqual(Layout{ .x = 60, .width = 40, .height = 30 }, try tree.readLayout(wrapping));
+}
+
 test "intrinsic measurement rejects non-finite dimensions" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 2 });
     defer tree.deinit();
@@ -2427,6 +3324,40 @@ test "intrinsic measurement rejects non-finite dimensions" {
         error.InvalidDimensions,
         tree.computeWithMeasure(leaf, .{ .width = 100, .height = 80 }, measureInvalidIntrinsic, null),
     );
+}
+
+test "auto flex containers hug child content and padding" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 50 },
+        .align_items = .flex_start,
+    });
+    const container = try tree.create(.{
+        .flex_direction = .column,
+        .padding = Edges.all(2),
+        .flex_gap = 5,
+    });
+    const first = try tree.create(.{
+        .width = .{ .length = 30 },
+        .height = .{ .length = 10 },
+    });
+    const second = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 12 },
+    });
+    try tree.appendChild(root, container);
+    try tree.appendChild(container, first);
+    try tree.appendChild(container, second);
+
+    try tree.compute(root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(
+        Layout{ .width = 34, .height = 31 },
+        try tree.readLayout(container),
+    );
+    try std.testing.expectEqual(Layout{ .x = 2, .y = 2, .width = 30, .height = 10 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .x = 2, .y = 17, .width = 20, .height = 12 }, try tree.readLayout(second));
 }
 test "computeDirty computes an uninitialized tree from a descendant" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
@@ -2484,6 +3415,29 @@ test "computeDirty matches full compute after descendant style mutation" {
     try std.testing.expectEqual(try full_tree.readLayout(full_container), try dirty_tree.readLayout(dirty_container));
     try std.testing.expectEqual(try full_tree.readLayout(full_leaf), try dirty_tree.readLayout(dirty_leaf));
     try std.testing.expectEqual(try full_tree.readLayout(full_sibling), try dirty_tree.readLayout(dirty_sibling));
+}
+
+test "computeDirty skips stable siblings and revisits changed dependencies" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{ .width = .{ .length = 100 }, .height = .{ .length = 50 } });
+    const branch = try tree.create(.{ .width = .{ .length = 40 }, .height = .{ .length = 20 } });
+    const leaf = try tree.create(.{ .width = .{ .length = 10 }, .height = .{ .length = 10 } });
+    const sibling = try tree.create(.{ .width = .{ .length = 20 }, .height = .{ .length = 20 } });
+    try tree.appendChild(root, branch);
+    try tree.appendChild(branch, leaf);
+    try tree.appendChild(root, sibling);
+    try tree.compute(root, .{ .width = 100, .height = 50 });
+
+    try tree.setStyle(leaf, .{ .width = .{ .length = 10 }, .height = .{ .length = 15 } });
+    (try tree.nodeAt(sibling)).layout.height = 777;
+    try tree.computeDirty(leaf, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(@as(f32, 777), (try tree.readLayout(sibling)).height);
+    try std.testing.expectEqual(@as(f32, 15), (try tree.readLayout(leaf)).height);
+
+    try tree.setStyle(branch, .{ .width = .{ .length = 60 }, .height = .{ .length = 20 } });
+    try tree.computeDirty(branch, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(Layout{ .x = 60, .width = 20, .height = 20 }, try tree.readLayout(sibling));
 }
 
 test "retained tree mutates children and propagates dirty state" {
@@ -2609,6 +3563,7 @@ test "deep retained trees fail layout safely and destroy iteratively" {
         error.TreeDepthExceeded,
         tree.compute(ids[0], .{ .width = 100, .height = 100 }),
     );
+
     try tree.setStyle(ids[0], .{ .display = .none });
     try tree.compute(ids[0], .{ .width = 100, .height = 100 });
     try std.testing.expectEqual(Layout{}, try tree.readLayout(ids[ids.len - 1]));
@@ -2640,6 +3595,71 @@ test "grid fixed and fractional tracks place explicit and automatic children" {
     try std.testing.expectEqual(Layout{ .x = 35, .width = 65, .height = 10 }, try tree.readLayout(explicit_a));
     try std.testing.expectEqual(Layout{ .y = 15, .width = 30, .height = 65 }, try tree.readLayout(explicit_b));
     try std.testing.expectEqual(Layout{ .width = 30, .height = 10 }, try tree.readLayout(automatic));
+}
+
+test "rtl grid maps logical columns from the right edge" {
+    const columns = [_]GridTrack{ GridTrack.fixedPx(20), GridTrack.fixedPx(30) };
+    const rows = [_]GridTrack{GridTrack.fixedPx(10)};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .display = .grid,
+        .direction = .rtl,
+        .width = .{ .length = 50 },
+        .height = .{ .length = 10 },
+        .grid_columns = &columns,
+        .grid_rows = &rows,
+    });
+    const first = try tree.create(.{});
+    const second = try tree.create(.{});
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+
+    try tree.compute(root, .{ .width = 50, .height = 10 });
+    try std.testing.expectEqual(Layout{ .x = 30, .width = 20, .height = 10 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .width = 30, .height = 10 }, try tree.readLayout(second));
+}
+test "grid auto flow grows implicit rows and columns" {
+    const two_columns = [_]GridTrack{ GridTrack.fixedPx(20), GridTrack.fixedPx(20) };
+    const one_row = [_]GridTrack{GridTrack.fixedPx(10)};
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 10, .max_grid_tracks = 8 });
+    defer tree.deinit();
+    const row_root = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 40 },
+        .height = .{ .length = 25 },
+        .grid_columns = &two_columns,
+        .grid_rows = &one_row,
+        .grid_auto_rows = GridTrack.fixedPx(15),
+    });
+    const row_first = try tree.create(.{});
+    const row_second = try tree.create(.{});
+    const row_third = try tree.create(.{});
+    try tree.appendChild(row_root, row_first);
+    try tree.appendChild(row_root, row_second);
+    try tree.appendChild(row_root, row_third);
+    try tree.compute(row_root, .{ .width = 40, .height = 25 });
+    try std.testing.expectEqual(Layout{ .y = 10, .width = 20, .height = 15 }, try tree.readLayout(row_third));
+
+    const one_column = [_]GridTrack{GridTrack.fixedPx(20)};
+    const two_rows = [_]GridTrack{ GridTrack.fixedPx(10), GridTrack.fixedPx(10) };
+    const column_root = try tree.create(.{
+        .display = .grid,
+        .grid_auto_flow = .column,
+        .width = .{ .length = 50 },
+        .height = .{ .length = 20 },
+        .grid_columns = &one_column,
+        .grid_rows = &two_rows,
+        .grid_auto_columns = GridTrack.fixedPx(30),
+    });
+    const column_first = try tree.create(.{});
+    const column_second = try tree.create(.{});
+    const column_third = try tree.create(.{});
+    try tree.appendChild(column_root, column_first);
+    try tree.appendChild(column_root, column_second);
+    try tree.appendChild(column_root, column_third);
+    try tree.compute(column_root, .{ .width = 50, .height = 20 });
+    try std.testing.expectEqual(Layout{ .x = 20, .width = 30, .height = 10 }, try tree.readLayout(column_third));
 }
 
 test "grid auto tracks use intrinsic child dimensions before fr space" {
@@ -3086,6 +4106,55 @@ test "flex margins contribute spacing without changing child boxes" {
     );
 }
 
+test "flex auto margins absorb remaining main and cross space" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+    });
+    const first = try tree.create(.{
+        .width = .{ .length = 10 },
+        .height = .{ .length = 10 },
+    });
+    const second = try tree.create(.{
+        .width = .{ .length = 20 },
+        .height = .{ .length = 20 },
+        .auto_margin = .{ .left = true, .top = true, .bottom = true },
+    });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+
+    try tree.compute(root, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(Layout{ .x = 80, .y = 40, .width = 20, .height = 20 }, try tree.readLayout(second));
+}
+
+test "row flex baseline alignment uses explicit offsets" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 50 },
+        .align_items = .baseline,
+    });
+    const first = try tree.create(.{
+        .width = .{ .length = 10 },
+        .height = .{ .length = 20 },
+        .baseline = 15,
+    });
+    const second = try tree.create(.{
+        .width = .{ .length = 10 },
+        .height = .{ .length = 10 },
+        .baseline = 5,
+    });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+
+    try tree.compute(root, .{ .width = 100, .height = 50 });
+    try std.testing.expectEqual(@as(f32, 0), (try tree.readLayout(first)).y);
+    try std.testing.expectEqual(@as(f32, 10), (try tree.readLayout(second)).y);
+}
+
 test "edges reject non-finite and negative spacing" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
     defer tree.deinit();
@@ -3183,6 +4252,48 @@ test "typed flex gaps resolve percentages, stretch, and bounds" {
     try std.testing.expectEqual(@as(f32, 35), (try tree.readLayout(second)).x);
 }
 
+test "axis-specific typed gaps resolve flex wrapping and grid tracks" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 12 });
+    defer tree.deinit();
+
+    const flex_root = try tree.create(.{
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+        .flex_wrap = .wrap,
+        .column_gap_spec = Gap.percentOfParent(0.1),
+        .row_gap_spec = Gap.percentOfParent(0.2),
+    });
+    const flex_first = try tree.create(.{ .width = .{ .length = 45 }, .height = .{ .length = 10 } });
+    const flex_second = try tree.create(.{ .width = .{ .length = 45 }, .height = .{ .length = 10 } });
+    const flex_third = try tree.create(.{ .width = .{ .length = 45 }, .height = .{ .length = 10 } });
+    try tree.appendChild(flex_root, flex_first);
+    try tree.appendChild(flex_root, flex_second);
+    try tree.appendChild(flex_root, flex_third);
+    try tree.compute(flex_root, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(@as(f32, 55), (try tree.readLayout(flex_second)).x);
+    try std.testing.expectEqual(@as(f32, 30), (try tree.readLayout(flex_third)).y);
+
+    const tracks = [_]GridTrack{ GridTrack.fixedPx(40), GridTrack.fixedPx(40) };
+    const grid_root = try tree.create(.{
+        .display = .grid,
+        .width = .{ .length = 100 },
+        .height = .{ .length = 100 },
+        .grid_columns = &tracks,
+        .grid_rows = &tracks,
+        .column_gap_spec = Gap.percentOfParent(0.1),
+        .row_gap_spec = Gap.fixedPx(5),
+    });
+    const grid_first = try tree.create(.{});
+    const grid_second = try tree.create(.{});
+    const grid_third = try tree.create(.{});
+    try tree.appendChild(grid_root, grid_first);
+    try tree.appendChild(grid_root, grid_second);
+    try tree.appendChild(grid_root, grid_third);
+    try tree.compute(grid_root, .{ .width = 100, .height = 100 });
+    try std.testing.expectEqual(@as(f32, 50), (try tree.readLayout(grid_second)).x);
+    try std.testing.expectEqual(@as(f32, 45), (try tree.readLayout(grid_third)).y);
+}
+
 test "typed flex gaps reject invalid values" {
     var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
     defer tree.deinit();
@@ -3209,6 +4320,56 @@ test "wrapped row forms bounded lines and places cross axis" {
     try std.testing.expectEqual(Layout{ .width = 30, .height = 10 }, try tree.readLayout(first));
     try std.testing.expectEqual(Layout{ .y = 10, .width = 30, .height = 10 }, try tree.readLayout(second));
     try std.testing.expectEqual(Layout{ .x = 30, .y = 10, .width = 20, .height = 10 }, try tree.readLayout(third));
+}
+
+test "wrapped lines honor align content distribution" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 4 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .flex_wrap = .wrap,
+        .width = .{ .length = 50 },
+        .height = .{ .length = 100 },
+        .align_content = .center,
+    });
+    const first = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    const second = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+
+    try tree.compute(root, .{ .width = 50, .height = 100 });
+    try std.testing.expectEqual(@as(f32, 40), (try tree.readLayout(first)).y);
+    try std.testing.expectEqual(@as(f32, 50), (try tree.readLayout(second)).y);
+
+    try tree.setStyle(root, .{
+        .flex_wrap = .wrap,
+        .width = .{ .length = 50 },
+        .height = .{ .length = 100 },
+        .align_content = .space_between,
+    });
+    try tree.compute(root, .{ .width = 50, .height = 100 });
+    try std.testing.expectEqual(@as(f32, 0), (try tree.readLayout(first)).y);
+    try std.testing.expectEqual(@as(f32, 90), (try tree.readLayout(second)).y);
+}
+
+test "reverse wrapping stacks lines from the opposite cross edge" {
+    var tree = LayoutTree.init(std.testing.allocator, .{ .max_nodes = 8 });
+    defer tree.deinit();
+    const root = try tree.create(.{
+        .flex_wrap = .wrap_reverse,
+        .width = .{ .length = 50 },
+        .height = .{ .length = 40 },
+    });
+    const first = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    const second = try tree.create(.{ .width = .{ .length = 30 }, .height = .{ .length = 10 } });
+    const third = try tree.create(.{ .width = .{ .length = 20 }, .height = .{ .length = 10 } });
+    try tree.appendChild(root, first);
+    try tree.appendChild(root, second);
+    try tree.appendChild(root, third);
+
+    try tree.compute(root, .{ .width = 50, .height = 40 });
+    try std.testing.expectEqual(Layout{ .y = 30, .width = 30, .height = 10 }, try tree.readLayout(first));
+    try std.testing.expectEqual(Layout{ .y = 20, .width = 30, .height = 10 }, try tree.readLayout(second));
+    try std.testing.expectEqual(Layout{ .x = 30, .y = 20, .width = 20, .height = 10 }, try tree.readLayout(third));
 }
 
 test "wrapped column forms bounded lines and places cross axis" {

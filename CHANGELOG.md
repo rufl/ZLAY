@@ -6,6 +6,19 @@ All notable changes to ZLAY are recorded here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Expanded the additive retained solver with content-hugging containers,
+  width-dependent intrinsic remeasurement, typed axis gaps, wrapped-line
+  alignment, reverse wrapping, flex auto margins, baseline alignment,
+  direction-aware grids, implicit tracks, row/column auto-flow, intrinsic
+  content-sizing keywords, and an external `RetainedStore` solver bridge.
+
+### Changed
+
+- `computeDirty` now skips stable subtrees only while their cached layout inputs
+  remain unchanged, and bounded retained-tree destruction no longer recurses.
+
 ## [0.1.0] - 2026-08-02
 
 ### Added
