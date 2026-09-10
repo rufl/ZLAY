@@ -626,9 +626,11 @@ and written nodes for profiling and regression checks.
 pointer state. Registering elements establishes deterministic keyboard order.
 `focusFirst` and `focusLast` select explicit endpoints; navigation supports
 wrapping or clamping, `setHovered` validates and updates the current hover
-target, pointer capture is explicit, and `dispatch` returns a renderer-neutral
-target decision for keyboard focus, pointer capture, or hit-test input.
-Unregistering an element clears any focus, hover, or capture owned by it.
+target, and `dispatchPointer` updates hover from a validated hit target before
+dispatching to pointer capture or the hit target. `dispatch` remains a
+renderer-neutral read-only decision for keyboard focus, pointer capture, or
+hit-test input. Unregistering an element clears any focus, hover, or capture
+owned by it.
 
 ## Widget state primitives
 

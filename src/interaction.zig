@@ -258,6 +258,15 @@ pub const Interaction = struct {
         };
     }
 
+    /// Update hover from a pointer hit and dispatch using current capture.
+    /// Invalid or absent hits clear hover; capture still takes precedence.
+    pub fn dispatchPointer(self: *Interaction, event: Event) DispatchDecision {
+        std.debug.assert(event.kind == .pointer);
+        const hover_target = if (event.hit_target) |id| if (self.contains(id)) id else null else null;
+        _ = self.setHovered(hover_target);
+        return self.dispatch(event);
+    }
+
     pub fn dispatchTarget(self: *const Interaction, event: Event) ?ElementId {
         return self.dispatch(event).target;
     }
@@ -349,6 +358,24 @@ test "capture routes before hit testing and releases" {
     const hit_decision = state.dispatch(.{ .kind = .pointer, .hit_target = hit });
     try std.testing.expectEqual(hit, hit_decision.target.?);
     try std.testing.expectEqual(DispatchKind.hit_test, hit_decision.kind);
+}
+
+test "hover-aware pointer dispatch tracks valid hits and preserves capture" {
+    var storage: [3]ElementId = undefined;
+    var state = Interaction.init(&storage);
+    const captured = ElementId{ .id = 7 };
+    const hit = ElementId{ .id = 8 };
+    const stale = ElementId{ .id = 99 };
+    try state.register(captured);
+    try state.register(hit);
+    try state.capturePointer(captured);
+    const captured_decision = state.dispatchPointer(.{ .kind = .pointer, .hit_target = hit });
+    try std.testing.expectEqual(captured, captured_decision.target.?);
+    try std.testing.expectEqual(hit, state.hovered().?);
+    const invalid_decision = state.dispatchPointer(.{ .kind = .pointer, .hit_target = stale });
+    try std.testing.expectEqual(captured, invalid_decision.target.?);
+    try std.testing.expect(state.hovered() == null);
+    try std.testing.expectEqual(DispatchKind.captured, invalid_decision.kind);
 }
 
 test "keyboard dispatch follows focus and invalid hit targets are rejected" {
