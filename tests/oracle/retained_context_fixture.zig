@@ -125,7 +125,7 @@ fn printErrorDelta(
 ) !void {
     try out.print("errors {s} {s} delta {d}", .{ context_label, label, log.length - start });
     for (log.types[start..log.length]) |error_type| {
-        try out.print(" {d}", .{@intFromEnum(error_type)});
+        try out.print(" {d}", .{@backingInt(error_type)});
     }
     try out.print(" total {d}\n", .{log.length});
 }
@@ -143,7 +143,7 @@ fn printPointer(
         label,
         f32Bits(pointer.position.x),
         f32Bits(pointer.position.y),
-        @intFromEnum(pointer.state),
+        @backingInt(pointer.state),
         over.len,
     });
     for (over) |element_id| try out.print(" {d}", .{element_id.id});

@@ -134,10 +134,10 @@ class Aarch64HashQemuContractTests(unittest.TestCase):
             (
                 ".root_source_file = b.path(\"src/root.zig\"),\n"
                 "        .target = aarch64_qemu_target,\n"
-                "        .optimize = .Debug,",
+                "        .optimize = .debug,",
                 ".root_source_file = b.path(\"src/root.zig\"),\n"
                 "        .target = aarch64_qemu_target,\n"
-                "        .optimize = .ReleaseSafe,",
+                "        .optimize = .safe,",
                 "root optimization",
             ),
             ('&.{"-std=c99"}', '&.{"-std=gnu99"}', "C language pin"),
@@ -171,15 +171,19 @@ class Aarch64HashQemuContractTests(unittest.TestCase):
                 "pre-gate subcommand",
             ),
             (
-                '"source-contract",\n            "--repo-root",\n'
-                '            b.pathFromRoot("."),',
-                '"source-contract",\n            "--repo-root",\n'
-                '            b.pathFromRoot(".."),',
+                '            "source-contract",\n'
+                '            "--repo-root",\n'
+                "        });\n"
+                '        capture_aarch64_qemu_source_contract.addFileArg(b.path("."));',
+                '            "source-contract",\n'
+                '            "--repo-root",\n'
+                "        });\n"
+                '        capture_aarch64_qemu_source_contract.addFileArg(b.path(".."));',
                 "pre-gate repo root",
             ),
             (
-                '"--expected-build-zig-source",',
-                '"--expected-build-zig-sha256",',
+                'capture_aarch64_qemu_source_contract.addArg("--expected-build-zig-source");',
+                'capture_aarch64_qemu_source_contract.addArg("--expected-build-zig-sha256");',
                 "pre-gate expected source option",
             ),
             (
@@ -251,10 +255,9 @@ class Aarch64HashQemuContractTests(unittest.TestCase):
                 label, build_source=self.replace_lane_once(old, new, label)
             )
 
-        option = '            "--expected-build-zig-source",\n        });\n'
+        option = '        capture_aarch64_qemu_source_contract.addArg("--expected-build-zig-source");\n'
         reordered = (
-            '            "--expected-build-zig-source",\n'
-            "        });\n"
+            '        capture_aarch64_qemu_source_contract.addArg("--expected-build-zig-source");\n'
             "        capture_aarch64_qemu_source_contract.has_side_effects = true;\n"
         )
         old = (
@@ -364,8 +367,8 @@ class Aarch64HashQemuContractTests(unittest.TestCase):
     def test_qemu_executor_and_cpu_are_not_substitutable(self) -> None:
         mutations = (
             (
-                'b.findProgram(&.{"qemu-aarch64"}, &.{}) catch null',
-                'b.findProgram(&.{"qemu-system-aarch64"}, &.{}) catch null',
+                'const qemu_aarch64 = b.findProgram(.{ .names = &.{"qemu-aarch64"} });',
+                'const qemu_aarch64 = b.findProgram(.{ .names = &.{"qemu-system-aarch64"} });',
                 "alternative resolver",
             ),
             (
@@ -502,14 +505,30 @@ class Aarch64HashQemuContractTests(unittest.TestCase):
                 "report script",
             ),
             (
-                '"report",\n            "--repo-root",\n'
-                '            b.pathFromRoot("."),',
-                '"report",\n            "--repo-root",\n'
-                '            b.pathFromRoot(".."),',
+                '            "report",\n'
+                '            "--repo-root",\n'
+                "        });\n"
+                '        run_aarch64_qemu_report.addFileArg(b.path("."));',
+                '            "report",\n'
+                '            "--repo-root",\n'
+                "        });\n"
+                '        run_aarch64_qemu_report.addFileArg(b.path(".."));',
                 "report repo root",
             ),
-            ('"--qemu",\n            qemu_exe,', '"--qemu",\n            "qemu-aarch64",', "report QEMU"),
-            ('"--zig",\n            b.graph.zig_exe,', '"--zig",\n            "zig",', "report Zig"),
+            (
+                'run_aarch64_qemu_report.addArg("--qemu");\n'
+                "        run_aarch64_qemu_report.addArg(qemu_exe);",
+                'run_aarch64_qemu_report.addArg("--qemu");\n'
+                '        run_aarch64_qemu_report.addArg("qemu-aarch64");',
+                "report QEMU",
+            ),
+            (
+                'run_aarch64_qemu_report.addArg("--zig");\n'
+                "        run_aarch64_qemu_report.addArg(b.graph.zig_exe);",
+                'run_aarch64_qemu_report.addArg("--zig");\n'
+                '        run_aarch64_qemu_report.addArg("zig");',
+                "report Zig",
+            ),
             (
                 "run_aarch64_qemu_report.addFileArg(aarch64_qemu_c_output);",
                 "run_aarch64_qemu_report.addFileArg(aarch64_qemu_zig_output);",
@@ -598,8 +617,8 @@ class Aarch64HashQemuContractTests(unittest.TestCase):
     def test_missing_qemu_cannot_silently_skip(self) -> None:
         mutations = (
             (
-                'const qemu_aarch64 = b.findProgram(&.{"qemu-aarch64"}, &.{}) catch null;',
-                'const qemu_aarch64 = b.findProgram(&.{"qemu-aarch64"}, &.{}) catch return;',
+                'const qemu_aarch64 = b.findProgram(.{ .names = &.{"qemu-aarch64"} });',
+                'const qemu_aarch64 = b.findProgram(.{ .names = &.{"qemu-aarch64"} }) catch return;',
                 "resolver failure behavior",
             ),
             (

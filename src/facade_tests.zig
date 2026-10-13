@@ -264,10 +264,10 @@ fn requireDecl(comptime owner: type, comptime name: []const u8, comptime label: 
 fn requireFunctionParams(comptime function: anytype, comptime params: []const type, comptime name: []const u8) @TypeOf(@typeInfo(@TypeOf(function)).@"fn") {
     const info = @typeInfo(@TypeOf(function)).@"fn";
     if (info.is_generic) @compileError(name ++ " unexpectedly became generic");
-    if (info.is_var_args) @compileError(name ++ " unexpectedly became variadic");
-    if (info.params.len != params.len) @compileError(name ++ " parameter count changed");
+    if (info.attrs.varargs) @compileError(name ++ " unexpectedly became variadic");
+    if (info.param_types.len != params.len) @compileError(name ++ " parameter count changed");
     inline for (params, 0..) |expected, index| {
-        if (info.params[index].type == null or info.params[index].type.? != expected) {
+        if (info.param_types[index] == null or info.param_types[index].? != expected) {
             @compileError(name ++ " parameter type changed");
         }
     }
@@ -307,11 +307,11 @@ fn requireGenericSignature(
 ) void {
     const info = @typeInfo(@TypeOf(function)).@"fn";
     if (!info.is_generic) @compileError(name ++ " must remain generic");
-    if (info.is_var_args) @compileError(name ++ " unexpectedly became variadic");
-    if (info.params.len != params.len) @compileError(name ++ " parameter count changed");
+    if (info.attrs.varargs) @compileError(name ++ " unexpectedly became variadic");
+    if (info.param_types.len != params.len) @compileError(name ++ " parameter count changed");
     inline for (params, 0..) |expected, index| {
         if (expected) |expected_type| {
-            if (info.params[index].type == null or info.params[index].type.? != expected_type) {
+            if (info.param_types[index] == null or info.param_types[index].? != expected_type) {
                 @compileError(name ++ " fixed parameter type changed");
             }
         }

@@ -51,7 +51,7 @@ fn printFrame(
         commands.length,
     });
     for (errors.types[error_start..errors.length]) |error_type| {
-        try out.print(" error-type {d}", .{@intFromEnum(error_type)});
+        try out.print(" error-type {d}", .{@backingInt(error_type)});
     }
     try out.writeByte('\n');
 

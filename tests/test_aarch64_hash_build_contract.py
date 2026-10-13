@@ -168,17 +168,22 @@ class Aarch64HashBuildContractTests(unittest.TestCase):
                 "reordered capture command tokens",
             ),
             (
-                '                aarch64_evidence_out.?,\n                "--header",',
-                '                aarch64_evidence_out.?,\n'
-                '                "--unexpected",\n'
-                '                "--header",',
+                '            capture_evidence.addArg("--output");\n'
+                '            capture_evidence.addArg(aarch64_evidence_out.?);\n'
+                '            capture_evidence.addArg("--header");',
+                '            capture_evidence.addArg("--output");\n'
+                '            capture_evidence.addArg("--unexpected");\n'
+                '            capture_evidence.addArg("--header");',
                 "extra capture string argument",
             ),
             (
-                '                aarch64_evidence_out.?,\n                "--header",',
-                '                aarch64_evidence_out.?,\n'
-                "                aarch64_provenance.?,\n"
-                '                "--header",',
+                '            capture_evidence.addArg("--output");\n'
+                '            capture_evidence.addArg(aarch64_evidence_out.?);\n'
+                '            capture_evidence.addArg("--header");',
+                '            capture_evidence.addArg("--output");\n'
+                '            capture_evidence.addArg(aarch64_evidence_out.?);\n'
+                '            capture_evidence.addArg(aarch64_provenance.?);\n'
+                '            capture_evidence.addArg("--header");',
                 "extra capture expression argument",
             ),
         )
@@ -218,21 +223,21 @@ class Aarch64HashBuildContractTests(unittest.TestCase):
             ),
             ('"snapshot",', '"validate",', "snapshot mode"),
             (
-                '"--repo-root",\n                b.pathFromRoot("."),\n                "--expected-build-zig-sha256",',
-                '"--repo-root",\n                b.pathFromRoot(".."),\n                "--expected-build-zig-sha256",',
+                'capture_source_snapshot.addFileArg(b.path("."));',
+                'capture_source_snapshot.addFileArg(b.path(".."));',
                 "snapshot repository root",
             ),
             (
-                '"--expected-build-zig-sha256",',
-                '"--untrusted-build-zig-sha256",',
+                'capture_source_snapshot.addArg("--expected-build-zig-sha256");',
+                'capture_source_snapshot.addArg("--untrusted-build-zig-sha256");',
                 "snapshot expected digest option",
             ),
             (
-                "embedded_build_zig_sha256[0..],",
-                '"0" ** 64,',
+                "capture_source_snapshot.addArg(embedded_build_zig_sha256[0..]);",
+                'capture_source_snapshot.addArg("0" ** 64);',
                 "snapshot embedded digest value",
             ),
-            ('"--output",\n            });', '"--no-output",\n            });', "snapshot output option"),
+            ('capture_source_snapshot.addArg("--output");', 'capture_source_snapshot.addArg("--no-output");', "snapshot output option"),
             (
                 "capture_source_snapshot.has_side_effects = true;",
                 "capture_source_snapshot.has_side_effects = false;",
@@ -613,22 +618,24 @@ class Aarch64HashBuildContractTests(unittest.TestCase):
                 option,
             )
 
-        capture_repo_root = (
-            '"capture",\n                "--repo-root",\n                b.pathFromRoot("."),'
-        )
+        capture_repo_root = 'capture_evidence.addFileArg(b.path("."));'
         self.assert_rejected(
             self.replace_contract_once(
                 capture_repo_root,
-                '"capture",\n                "--changed-repo-root",\n                b.pathFromRoot("."),',
+                'capture_evidence.addFileArg(b.path(".."));',
                 "capture --repo-root",
             ),
             "capture --repo-root",
         )
-        capture_output = '"--output",\n                aarch64_evidence_out.?,'
+        capture_output = (
+            'capture_evidence.addArg("--output");\n'
+            '            capture_evidence.addArg(aarch64_evidence_out.?);'
+        )
         self.assert_rejected(
             self.replace_contract_once(
                 capture_output,
-                '"--changed-output",\n                aarch64_evidence_out.?,',
+                'capture_evidence.addArg("--changed-output");\n'
+                '            capture_evidence.addArg(aarch64_evidence_out.?);',
                 "capture --output",
             ),
             "capture --output",
@@ -646,12 +653,11 @@ class Aarch64HashBuildContractTests(unittest.TestCase):
         )
         self.assert_rejected(injected, "direct final-capture provenance")
 
-        capture_header = '                "--header",\n            });'
+        capture_header = '        capture_evidence.addArg("--header");'
         command_injected = self.replace_contract_once(
             capture_header,
-            '                "--header",\n'
-            '                "--provenance",\n'
-            "            });",
+            '        capture_evidence.addArg("--header");\n'
+            '        capture_evidence.addArg("--provenance");',
             "direct final-capture command provenance",
         )
         self.assert_rejected(

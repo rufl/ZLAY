@@ -99,7 +99,7 @@ class Aarch64HashQemuReportTests(unittest.TestCase):
             "#!/bin/sh\nprintf 'qemu-aarch64 version 11.0.2\\n'\n",
             encoding="utf-8",
         )
-        self.zig.write_text("#!/bin/sh\nprintf '0.16.0\\n'\n", encoding="utf-8")
+        self.zig.write_text("#!/bin/sh\nprintf '0.17.0\\n'\n", encoding="utf-8")
         os.chmod(self.qemu, 0o755)
         os.chmod(self.zig, 0o755)
         self.c_trace.write_bytes(EXPECTED_TRACE)
@@ -189,7 +189,7 @@ class Aarch64HashQemuReportTests(unittest.TestCase):
             f"executor={self.qemu}",
             "qemu_version=11.0.2",
             f"zig_executable={self.zig}",
-            "zig_version=0.16.0",
+            "zig_version=0.17.0",
             "target=aarch64-linux-musl arch=aarch64 os=linux abi=musl",
             "endian=little target_cpu=baseline qemu_cpu=max",
             "optimize=Debug linkage=static",

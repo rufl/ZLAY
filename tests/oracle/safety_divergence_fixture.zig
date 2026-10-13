@@ -49,7 +49,7 @@ fn floatingBox(x: f32, y: f32, color: zlay.Color) zlay.ElementDeclaration {
 fn printErrorDelta(out: *std.Io.Writer, errors: *const ErrorLog, start: usize) !void {
     try out.print(" errors {d}", .{errors.length - start});
     for (errors.types[start..errors.length]) |error_type| {
-        try out.print(" {d}", .{@intFromEnum(error_type)});
+        try out.print(" {d}", .{@backingInt(error_type)});
     }
 }
 
@@ -63,7 +63,7 @@ fn printCommands(out: *std.Io.Writer, label: []const u8, commands: zlay.RenderCo
         try out.print("command {s} {d} type {d} id {d} box {d} {d} {d} {d} text {d}\n", .{
             label,
             index,
-            @intFromEnum(command.command_type),
+            @backingInt(command.command_type),
             command.id,
             f32Bits(command.bounding_box.x),
             f32Bits(command.bounding_box.y),
@@ -250,7 +250,7 @@ pub fn main(init: std.process.Init) !void {
 
     try out.print("total-errors {d}", .{errors.length});
     for (errors.types[0..errors.length]) |error_type| {
-        try out.print(" {d}", .{@intFromEnum(error_type)});
+        try out.print(" {d}", .{@backingInt(error_type)});
     }
     try out.writeByte('\n');
     try out.flush();

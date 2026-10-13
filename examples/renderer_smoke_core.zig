@@ -23,7 +23,7 @@ const SmokeBackend = struct {
 
     fn note(self: *SmokeBackend, command: zlay.RenderCommand, expected: zlay.RenderCommandType) !void {
         if (command.command_type != expected or command.id == 0) return error.InvalidFrame;
-        self.seen_types |= @as(u16, 1) << @intCast(@intFromEnum(expected));
+        self.seen_types |= @as(u16, 1) << @intCast(@backingInt(expected));
         self.command_count += 1;
     }
 

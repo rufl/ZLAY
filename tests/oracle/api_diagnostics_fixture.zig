@@ -39,7 +39,7 @@ fn printErrors(out: *std.Io.Writer, log: *const ErrorLog) !void {
             index,
             record.tag,
             record.phase,
-            @intFromEnum(record.error_type),
+            @backingInt(record.error_type),
             @intFromBool(record.text.is_statically_allocated),
             record.text.length,
             record.text.asSlice(),

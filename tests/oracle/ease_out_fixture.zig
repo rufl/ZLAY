@@ -72,7 +72,7 @@ pub fn main(init: std.process.Init) !void {
         .border_width,
         .bounding_box,
         .border,
-        @enumFromInt(511),
+        @fromBackingInt(@intCast(511)),
     };
     const elapsed = [_]f32{ 0, 0, 2, 4, 8, -1 };
     const duration = [_]f32{ 0, 4, 4, 4, 4, 4 };

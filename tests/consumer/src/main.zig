@@ -107,7 +107,7 @@ const ParagraphMock = struct {
         const height = request.text_style.size_px * 1.25 *
             @as(f32, @floatFromInt(line_count));
         const key = zlay.ParagraphLeaseKey{
-            .handle = @enumFromInt(self.next_handle),
+            .handle = @fromBackingInt(@intCast(self.next_handle)),
             .generation = 1,
         };
         self.next_handle += 1;

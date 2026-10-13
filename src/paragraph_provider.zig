@@ -43,12 +43,12 @@ pub const Tag = enum(u32) {
     _,
 
     pub fn fromBytes(bytes: [4]u8) Tag {
-        return @enumFromInt(
+        return @fromBackingInt(@intCast(
             (@as(u32, bytes[0]) << 24) |
                 (@as(u32, bytes[1]) << 16) |
                 (@as(u32, bytes[2]) << 8) |
                 @as(u32, bytes[3]),
-        );
+        ));
     }
 };
 
@@ -409,7 +409,7 @@ const ValidationProvider = struct {
         const self = from(context);
         self.calls += 1;
         return .{ .value = .{
-            .handle = if (self.invalid_layout) .invalid else @enumFromInt(4),
+            .handle = if (self.invalid_layout) .invalid else @fromBackingInt(@intCast(4)),
             .generation = 2,
             .paragraph_metrics = .{
                 .logical = .{

@@ -470,7 +470,7 @@ pub const LayoutTree = struct {
     }
 
     pub fn setHitTestBehavior(self: *LayoutTree, id: NodeId, behavior: HitTestBehavior) Error!void {
-        if (@intFromEnum(behavior) >= 3) return error.InvalidStyle;
+        if (@backingInt(behavior) >= 3) return error.InvalidStyle;
         const node_ref = try self.nodeAt(id);
         node_ref.style.hit_test_behavior = behavior;
         self.markDirty(id);
@@ -2259,8 +2259,8 @@ pub const LayoutTree = struct {
         // Grid track counts are bounded by Options; this fixed scratch keeps
         // resolution allocation-free while allowing custom capacities well
         // beyond the default.
-        var frozen: [256]bool = [_]bool{false} ** 256;
-        var newly_frozen: [256]bool = [_]bool{false} ** 256;
+        var frozen: [256]bool = @splat(false);
+        var newly_frozen: [256]bool = @splat(false);
         var frozen_values: [256]f32 = undefined;
         var frozen_sum: f32 = 0;
         var active_weight = boundedAdd(fractions, bounded_count);
@@ -3507,16 +3507,16 @@ fn validateStyle(style: Style) Error!void {
     try validateGapSpec(style.max_row_gap_spec);
     try validateGapSpec(style.min_flex_gap_spec);
     try validateGapSpec(style.max_flex_gap_spec);
-    if (@intFromEnum(style.flex_direction) >= 4 or
-        @intFromEnum(style.hit_test_behavior) >= 3 or
-        @intFromEnum(style.direction) >= 2 or
-        @intFromEnum(style.grid_auto_flow) >= 4 or
-        @intFromEnum(style.flex_wrap) >= 3 or
-        @intFromEnum(style.align_items) >= 5 or
-        @intFromEnum(style.align_self) >= 6 or
-        @intFromEnum(style.alignment) >= 9 or
-        @intFromEnum(style.justify_content) >= 6 or
-        @intFromEnum(style.align_content) >= 7)
+    if (@backingInt(style.flex_direction) >= 4 or
+        @backingInt(style.hit_test_behavior) >= 3 or
+        @backingInt(style.direction) >= 2 or
+        @backingInt(style.grid_auto_flow) >= 4 or
+        @backingInt(style.flex_wrap) >= 3 or
+        @backingInt(style.align_items) >= 5 or
+        @backingInt(style.align_self) >= 6 or
+        @backingInt(style.alignment) >= 9 or
+        @backingInt(style.justify_content) >= 6 or
+        @backingInt(style.align_content) >= 7)
     {
         return error.InvalidStyle;
     }
@@ -4706,7 +4706,7 @@ test "grid rejects invalid tracks and bounded track capacity" {
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one }));
     try std.testing.expectError(error.InvalidStyle, tree.create(.{ .display = .grid, .grid_columns = &one, .grid_rows = &[_]GridTrack{.{ .fr = 0 }} }));
     try std.testing.expectError(error.GridTrackCapacityExceeded, tree.create(.{ .display = .grid, .grid_columns = &two, .grid_rows = &one }));
-    const too_many = [_]GridTrack{.{ .fixed = 1 }} ** (max_supported_grid_tracks + 1);
+    const too_many: [max_supported_grid_tracks + 1]GridTrack = @splat(.{ .fixed = 1 });
     var oversized_tree = LayoutTree.init(std.testing.allocator, .{
         .max_nodes = 1,
         .max_grid_tracks = max_supported_grid_tracks + 1,

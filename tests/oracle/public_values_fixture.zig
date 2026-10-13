@@ -12,7 +12,7 @@ fn enumRecord(comptime group: []const u8, comptime name: []const u8, value: anyt
     return .{
         .group = group,
         .name = name,
-        .value = @intCast(@intFromEnum(value)),
+        .value = @intCast(@backingInt(value)),
     };
 }
 
@@ -125,7 +125,7 @@ fn printAxis(out: *std.Io.Writer, label: []const u8, axis: zlay.SizingAxis) !voi
     }
     try out.print("axis {s} type {d} min {x:0>8} max {x:0>8} percent {x:0>8}\n", .{
         label,
-        @intFromEnum(axis.type),
+        @backingInt(axis.type),
         min_bits,
         max_bits,
         percent_bits,
@@ -184,19 +184,19 @@ fn printEnums(out: *std.Io.Writer) !void {
 }
 
 fn printTransitionMasks(out: *std.Io.Writer) !void {
-    try out.print("transition-mask position {d}\n", .{@intFromEnum(zlay.TransitionProperty.position)});
-    try out.print("transition-mask dimensions {d}\n", .{@intFromEnum(zlay.TransitionProperty.dimensions)});
-    try out.print("transition-mask bounding-box {d}\n", .{@intFromEnum(zlay.TransitionProperty.bounding_box)});
-    try out.print("transition-mask border {d}\n", .{@intFromEnum(zlay.TransitionProperty.border)});
-    try out.print("transition-mask supported {d}\n", .{@as(u16, @intFromEnum(zlay.TransitionProperty.bounding_box)) |
-        @intFromEnum(zlay.TransitionProperty.background_color) |
-        @intFromEnum(zlay.TransitionProperty.overlay_color) |
-        @intFromEnum(zlay.TransitionProperty.border)});
-    try out.print("transition-mask all-declared {d}\n", .{@as(u16, @intFromEnum(zlay.TransitionProperty.bounding_box)) |
-        @intFromEnum(zlay.TransitionProperty.background_color) |
-        @intFromEnum(zlay.TransitionProperty.overlay_color) |
-        @intFromEnum(zlay.TransitionProperty.corner_radius) |
-        @intFromEnum(zlay.TransitionProperty.border)});
+    try out.print("transition-mask position {d}\n", .{@backingInt(zlay.TransitionProperty.position)});
+    try out.print("transition-mask dimensions {d}\n", .{@backingInt(zlay.TransitionProperty.dimensions)});
+    try out.print("transition-mask bounding-box {d}\n", .{@backingInt(zlay.TransitionProperty.bounding_box)});
+    try out.print("transition-mask border {d}\n", .{@backingInt(zlay.TransitionProperty.border)});
+    try out.print("transition-mask supported {d}\n", .{@as(u16, @backingInt(zlay.TransitionProperty.bounding_box)) |
+        @backingInt(zlay.TransitionProperty.background_color) |
+        @backingInt(zlay.TransitionProperty.overlay_color) |
+        @backingInt(zlay.TransitionProperty.border)});
+    try out.print("transition-mask all-declared {d}\n", .{@as(u16, @backingInt(zlay.TransitionProperty.bounding_box)) |
+        @backingInt(zlay.TransitionProperty.background_color) |
+        @backingInt(zlay.TransitionProperty.overlay_color) |
+        @backingInt(zlay.TransitionProperty.corner_radius) |
+        @backingInt(zlay.TransitionProperty.border)});
 }
 
 fn printDefaults(out: *std.Io.Writer) !void {
@@ -256,7 +256,7 @@ fn printDefaults(out: *std.Io.Writer) !void {
     try out.print("default ElementId {d} {d} {d} static {d} length {d}\n", .{ id.id, id.offset, id.base_id, @intFromBool(id.string_id.is_statically_allocated), id.string_id.length });
     try out.print("default ElementIdArray capacity {d} length {d}\n", .{ id_array.capacity, id_array.length });
     try out.print("default CornerRadius {x:0>8} {x:0>8} {x:0>8} {x:0>8}\n", .{ f32Bits(radius.top_left), f32Bits(radius.top_right), f32Bits(radius.bottom_left), f32Bits(radius.bottom_right) });
-    try out.print("default ChildAlignment {d} {d}\n", .{ @intFromEnum(alignment.x), @intFromEnum(alignment.y) });
+    try out.print("default ChildAlignment {d} {d}\n", .{ @backingInt(alignment.x), @backingInt(alignment.y) });
     try out.print("default SizingMinMax {x:0>8} {x:0>8}\n", .{ f32Bits(min_max.min), f32Bits(min_max.max) });
     try printAxis(out, "default-SizingAxis", axis);
     try printAxis(out, "default-Sizing.width", sizing.width);
@@ -270,9 +270,9 @@ fn printDefaults(out: *std.Io.Writer) !void {
         layout.padding.top,
         layout.padding.bottom,
         layout.child_gap,
-        @intFromEnum(layout.child_alignment.x),
-        @intFromEnum(layout.child_alignment.y),
-        @intFromEnum(layout.layout_direction),
+        @backingInt(layout.child_alignment.x),
+        @backingInt(layout.child_alignment.y),
+        @backingInt(layout.layout_direction),
     });
     try out.print("default TextElementConfig userdata {d} color {x:0>8} {x:0>8} {x:0>8} {x:0>8} font {d} {d} spacing {d} line {d} wrap {d} align {d}\n", .{
         @intFromBool(text.user_data != null),
@@ -284,12 +284,12 @@ fn printDefaults(out: *std.Io.Writer) !void {
         text.font_size,
         text.letter_spacing,
         text.line_height,
-        @intFromEnum(text.wrap_mode),
-        @intFromEnum(text.text_alignment),
+        @backingInt(text.wrap_mode),
+        @backingInt(text.text_alignment),
     });
     try out.print("default AspectRatio {x:0>8}\n", .{f32Bits(aspect.aspect_ratio)});
     try out.print("default Image data {d}\n", .{@intFromBool(image.image_data != null)});
-    try out.print("default FloatingAttachPoints {d} {d}\n", .{ @intFromEnum(attach_points.element), @intFromEnum(attach_points.parent) });
+    try out.print("default FloatingAttachPoints {d} {d}\n", .{ @backingInt(attach_points.element), @backingInt(attach_points.parent) });
     try out.print("default Floating offset {x:0>8} {x:0>8} expand {x:0>8} {x:0>8} parent {d} z {d} points {d} {d} capture {d} attach {d} clip {d}\n", .{
         f32Bits(floating.offset.x),
         f32Bits(floating.offset.y),
@@ -297,11 +297,11 @@ fn printDefaults(out: *std.Io.Writer) !void {
         f32Bits(floating.expand.height),
         floating.parent_id,
         floating.z_index,
-        @intFromEnum(floating.attach_points.element),
-        @intFromEnum(floating.attach_points.parent),
-        @intFromEnum(floating.pointer_capture_mode),
-        @intFromEnum(floating.attach_to),
-        @intFromEnum(floating.clip_to),
+        @backingInt(floating.attach_points.element),
+        @backingInt(floating.attach_points.parent),
+        @backingInt(floating.pointer_capture_mode),
+        @backingInt(floating.attach_to),
+        @backingInt(floating.clip_to),
     });
     try out.print("default Custom data {d}\n", .{@intFromBool(custom.custom_data != null)});
     try out.print("default Clip {d} {d} offset {x:0>8} {x:0>8}\n", .{ @intFromBool(clip.horizontal), @intFromBool(clip.vertical), f32Bits(clip.child_offset.x), f32Bits(clip.child_offset.y) });
@@ -314,22 +314,22 @@ fn printDefaults(out: *std.Io.Writer) !void {
     try printColor(out, "default-TransitionData.border", transition_data.border_color);
     try printBorderWidth(out, "default-TransitionData.width", transition_data.border_width);
     try out.print("default TransitionCallbackArguments state {d} current {d} elapsed {x:0>8} duration {x:0>8} properties {d}\n", .{
-        @intFromEnum(transition_arguments.transition_state),
+        @backingInt(transition_arguments.transition_state),
         1,
         f32Bits(transition_arguments.elapsed_time),
         f32Bits(transition_arguments.duration),
-        @intFromEnum(transition_arguments.properties),
+        @backingInt(transition_arguments.properties),
     });
     try out.print("default TransitionElementConfig handler {d} duration {x:0>8} properties {d} interaction {d} enter-fn {d} enter-trigger {d} exit-fn {d} exit-trigger {d} ordering {d}\n", .{
         @intFromBool(transition.handler != null),
         f32Bits(transition.duration),
-        @intFromEnum(transition.properties),
-        @intFromEnum(transition.interaction_handling),
+        @backingInt(transition.properties),
+        @backingInt(transition.interaction_handling),
         @intFromBool(transition.enter.set_initial_state != null),
-        @intFromEnum(transition.enter.trigger),
+        @backingInt(transition.enter.trigger),
         @intFromBool(transition.exit.set_final_state != null),
-        @intFromEnum(transition.exit.trigger),
-        @intFromEnum(transition.exit.sibling_ordering),
+        @backingInt(transition.exit.trigger),
+        @backingInt(transition.exit.sibling_ordering),
     });
     try out.print("default TextRender length {d} color {x:0>8} {x:0>8} {x:0>8} {x:0>8} font {d} {d} spacing {d} line {d}\n", .{
         text_render.string_contents.length,
@@ -368,17 +368,17 @@ fn printDefaults(out: *std.Io.Writer) !void {
         @intFromBool(render_command.user_data != null),
         render_command.id,
         render_command.z_index,
-        @intFromEnum(render_command.command_type),
+        @backingInt(render_command.command_type),
         f32Bits(render_command.render_data.rectangle.background_color.a),
     });
     try out.print("default RenderCommandArray capacity {d} length {d}\n", .{ render_array.capacity, render_array.length });
-    try out.print("default PointerData position {x:0>8} {x:0>8} state {d}\n", .{ f32Bits(pointer.position.x), f32Bits(pointer.position.y), @intFromEnum(pointer.state) });
+    try out.print("default PointerData position {x:0>8} {x:0>8} state {d}\n", .{ f32Bits(pointer.position.x), f32Bits(pointer.position.y), @backingInt(pointer.state) });
     try out.print("default ElementDeclaration background-a {x:0>8} overlay-a {x:0>8} aspect {x:0>8} image {d} floating-attach {d} custom {d} clip {d} {d} border-between {d} transition-handler {d} userdata {d}\n", .{
         f32Bits(declaration.background_color.a),
         f32Bits(declaration.overlay_color.a),
         f32Bits(declaration.aspect_ratio.aspect_ratio),
         @intFromBool(declaration.image.image_data != null),
-        @intFromEnum(declaration.floating.attach_to),
+        @backingInt(declaration.floating.attach_to),
         @intFromBool(declaration.custom.custom_data != null),
         @intFromBool(declaration.clip.horizontal),
         @intFromBool(declaration.clip.vertical),
@@ -387,7 +387,7 @@ fn printDefaults(out: *std.Io.Writer) !void {
         @intFromBool(declaration.user_data != null),
     });
     try out.print("default ErrorData type {d} static {d} length {d} userdata {d}\n", .{
-        @intFromEnum(error_data.error_type),
+        @backingInt(error_data.error_type),
         @intFromBool(error_data.error_text.is_statically_allocated),
         error_data.error_text.length,
         @intFromBool(error_data.user_data != null),
@@ -422,8 +422,8 @@ fn printHelpers(out: *std.Io.Writer) !void {
 fn printGlobals(out: *std.Io.Writer, context: *zlay.Context) !void {
     try out.print("global layout-default gap {d} direction {d} width-type {d}\n", .{
         zlay.layout_default.child_gap,
-        @intFromEnum(zlay.layout_default.layout_direction),
-        @intFromEnum(zlay.layout_default.sizing.width.type),
+        @backingInt(zlay.layout_default.layout_direction),
+        @backingInt(zlay.layout_default.sizing.width.type),
     });
     const saved_layout = zlay.layout_default.*;
     defer zlay.layout_default.* = saved_layout;
@@ -432,8 +432,8 @@ fn printGlobals(out: *std.Io.Writer, context: *zlay.Context) !void {
     zlay.layout_default.sizing.width = zlay.fixed(23.5);
     try out.print("global layout-roundtrip gap {d} direction {d} width-type {d} min {x:0>8} max {x:0>8}\n", .{
         zlay.layout_default.child_gap,
-        @intFromEnum(zlay.layout_default.layout_direction),
-        @intFromEnum(zlay.layout_default.sizing.width.type),
+        @backingInt(zlay.layout_default.layout_direction),
+        @backingInt(zlay.layout_default.sizing.width.type),
         f32Bits(zlay.layout_default.sizing.width.size.min_max.min),
         f32Bits(zlay.layout_default.sizing.width.size.min_max.max),
     });

@@ -65,7 +65,7 @@ pub fn main(init: std.process.Init) !void {
     var index: i32 = 0;
     while (index < length) : (index += 1) {
         const command = context.renderCommand(index).?;
-        try out.print("command {d} type {d}\n", .{ index, @intFromEnum(command.command_type) });
+        try out.print("command {d} type {d}\n", .{ index, @backingInt(command.command_type) });
         switch (command.command_type) {
             .scissor_start => scissor_depth += 1,
             .scissor_end => {
@@ -77,7 +77,7 @@ pub fn main(init: std.process.Init) !void {
     if (scissor_depth != 0) balanced = false;
     try out.print("balanced {d}\n", .{@intFromBool(balanced)});
     try out.print("errors {d}", .{errors.length});
-    for (errors.types[0..errors.length]) |error_type| try out.print(" {d}", .{@intFromEnum(error_type)});
+    for (errors.types[0..errors.length]) |error_type| try out.print(" {d}", .{@backingInt(error_type)});
     try out.writeByte('\n');
     try out.flush();
 }

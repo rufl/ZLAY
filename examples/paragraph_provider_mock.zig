@@ -49,7 +49,7 @@ const MockProvider = struct {
         const height = request.text_style.size_px * 1.25 *
             @as(f32, @floatFromInt(line_count));
         const key = zlay.ParagraphLeaseKey{
-            .handle = @enumFromInt(self.next_handle),
+            .handle = @fromBackingInt(@intCast(self.next_handle)),
             .generation = 1,
         };
         self.next_handle += 1;
@@ -155,7 +155,7 @@ pub fn main(_: std.process.Init) !void {
         std.debug.print(
             "draw paragraph handle={d} width={d:.1} lines={d}\n",
             .{
-                @intFromEnum(paragraph.lease.handle),
+                @backingInt(paragraph.lease.handle),
                 paragraph.available_width_px,
                 paragraph.lease.paragraph_metrics.line_count,
             },

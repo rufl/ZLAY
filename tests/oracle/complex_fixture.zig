@@ -24,7 +24,7 @@ fn printBox(stdout: *std.Io.Writer, context: *const zlay.Context, name: []const 
 fn printCommand(stdout: *std.Io.Writer, index: usize, command: zlay.RenderCommand) !void {
     try stdout.print("command {d} {d} {d} {d} {d} {d} {d} {d}", .{
         index,
-        @intFromEnum(command.command_type),
+        @backingInt(command.command_type),
         command.id,
         command.z_index,
         contract.f32Bits(command.bounding_box.x),

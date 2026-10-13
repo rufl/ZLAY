@@ -18,7 +18,7 @@ fn printAccess(out: *std.Io.Writer, label: []const u8, command: ?*zlay.RenderCom
     try out.print("access {s} present {d} type {d} id {d}\n", .{
         label,
         @intFromBool(command != null),
-        if (command) |value| @intFromEnum(value.command_type) else 0,
+        if (command) |value| @backingInt(value.command_type) else 0,
         if (command) |value| value.id else 0,
     });
 }
@@ -52,7 +52,7 @@ pub fn main(init: std.process.Init) !void {
     try printAccess(out, "past-end", past_end);
     try out.print("invalid-default-shared {d}\n", .{@intFromBool(negative == null and past_end == null)});
     try out.print("errors {d}", .{error_log.length});
-    for (error_log.types[0..error_log.length]) |error_type| try out.print(" {d}", .{@intFromEnum(error_type)});
+    for (error_log.types[0..error_log.length]) |error_type| try out.print(" {d}", .{@backingInt(error_type)});
     try out.writeByte('\n');
     try out.flush();
 }

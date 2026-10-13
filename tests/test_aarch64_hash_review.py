@@ -131,7 +131,7 @@ class Aarch64HashReviewTests(unittest.TestCase):
                 "ordinary_manifest_tests": self.manifest_tests_log,
             },
             executable_paths=self.executables,
-            zig_version="0.16.0",
+            zig_version="0.17.0",
             optimize="Debug",
             target={
                 "selection": "native",

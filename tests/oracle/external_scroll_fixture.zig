@@ -83,7 +83,7 @@ fn printCommands(out: *std.Io.Writer, label: []const u8, commands: zlay.RenderCo
         try out.print("command {s} {d} type {d} id {d} z {d} box {d} {d} {d} {d}", .{
             label,
             index,
-            @intFromEnum(command.command_type),
+            @backingInt(command.command_type),
             command.id,
             command.z_index,
             contract.f32Bits(command.bounding_box.x),

@@ -68,7 +68,7 @@ fn printCommands(out: *std.Io.Writer, label: []const u8, commands: zlay.RenderCo
         try out.print("command {s} {d} type {d} id {d} box {d} {d} {d} {d} text {d}\n", .{
             label,
             index,
-            @intFromEnum(command.command_type),
+            @backingInt(command.command_type),
             command.id,
             f32Bits(command.bounding_box.x),
             f32Bits(command.bounding_box.y),
@@ -85,7 +85,7 @@ fn printDiagnostics(out: *std.Io.Writer, log: *const ErrorLog) !void {
         try out.print("diagnostic {d} phase {d} type {d} static {d} len {d} text {s}\n", .{
             index,
             record.phase,
-            @intFromEnum(record.error_type),
+            @backingInt(record.error_type),
             @intFromBool(record.text.is_statically_allocated),
             record.text.length,
             record.text.asSlice(),

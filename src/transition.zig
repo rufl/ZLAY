@@ -10,12 +10,12 @@ const types = @import("types.zig");
 
 /// Every property represented by `Clay_TransitionData` and handled by the
 /// upstream transition implementation.
-pub const supported_properties: types.TransitionProperty = @enumFromInt(
-    @intFromEnum(types.TransitionProperty.bounding_box) |
-        @intFromEnum(types.TransitionProperty.background_color) |
-        @intFromEnum(types.TransitionProperty.overlay_color) |
-        @intFromEnum(types.TransitionProperty.border),
-);
+pub const supported_properties: types.TransitionProperty = @fromBackingInt(@intCast(
+    @backingInt(types.TransitionProperty.bounding_box) |
+        @backingInt(types.TransitionProperty.background_color) |
+        @backingInt(types.TransitionProperty.overlay_color) |
+        @backingInt(types.TransitionProperty.border),
+));
 
 /// Upstream currently declares this bit, but `Clay_TransitionData` has no
 /// corner-radius field and neither `Clay_EaseOut` nor
@@ -24,7 +24,7 @@ pub const supported_properties: types.TransitionProperty = @enumFromInt(
 pub const upstream_no_op_properties: types.TransitionProperty = .corner_radius;
 
 pub fn intersects(properties: types.TransitionProperty, mask: types.TransitionProperty) bool {
-    return (@intFromEnum(properties) & @intFromEnum(mask)) != 0;
+    return (@backingInt(properties) & @backingInt(mask)) != 0;
 }
 
 /// Clay's `CLAY__LERP(from, to, mix)` with explicit f32 intermediates.
@@ -241,56 +241,56 @@ pub fn changedProperties(
     new_target: types.TransitionData,
     detection: ChangeDetection,
 ) types.TransitionProperty {
-    var bits: u16 = @intFromEnum(types.TransitionProperty.none);
+    var bits: u16 = @backingInt(types.TransitionProperty.none);
 
     if (intersects(configured, .x) and
         !floatEqual(old_target.bounding_box.x, new_target.bounding_box.x) and
         (!floatEqual(detection.old_parent_relative_position.x, detection.new_parent_relative_position.x) or detection.reparented) and
         !detection.root_resized_last_frame)
     {
-        bits |= @intFromEnum(types.TransitionProperty.x);
+        bits |= @backingInt(types.TransitionProperty.x);
     }
     if (intersects(configured, .y) and
         !floatEqual(old_target.bounding_box.y, new_target.bounding_box.y) and
         (!floatEqual(detection.old_parent_relative_position.y, detection.new_parent_relative_position.y) or detection.reparented) and
         !detection.root_resized_last_frame)
     {
-        bits |= @intFromEnum(types.TransitionProperty.y);
+        bits |= @backingInt(types.TransitionProperty.y);
     }
     if (intersects(configured, .width) and
         !floatEqual(old_target.bounding_box.width, new_target.bounding_box.width) and
         !detection.root_resized_last_frame)
     {
-        bits |= @intFromEnum(types.TransitionProperty.width);
+        bits |= @backingInt(types.TransitionProperty.width);
     }
     if (intersects(configured, .height) and
         !floatEqual(old_target.bounding_box.height, new_target.bounding_box.height) and
         !detection.root_resized_last_frame)
     {
-        bits |= @intFromEnum(types.TransitionProperty.height);
+        bits |= @backingInt(types.TransitionProperty.height);
     }
     if (intersects(configured, .background_color) and
         !bitwiseEqual(types.Color, old_target.background_color, new_target.background_color))
     {
-        bits |= @intFromEnum(types.TransitionProperty.background_color);
+        bits |= @backingInt(types.TransitionProperty.background_color);
     }
     if (intersects(configured, .overlay_color) and
         !bitwiseEqual(types.Color, old_target.overlay_color, new_target.overlay_color))
     {
-        bits |= @intFromEnum(types.TransitionProperty.overlay_color);
+        bits |= @backingInt(types.TransitionProperty.overlay_color);
     }
     if (intersects(configured, .border_color) and
         !bitwiseEqual(types.Color, old_target.border_color, new_target.border_color))
     {
-        bits |= @intFromEnum(types.TransitionProperty.border_color);
+        bits |= @backingInt(types.TransitionProperty.border_color);
     }
     if (intersects(configured, .border_width) and
         !bitwiseEqual(types.BorderWidth, old_target.border_width, new_target.border_width))
     {
-        bits |= @intFromEnum(types.TransitionProperty.border_width);
+        bits |= @backingInt(types.TransitionProperty.border_width);
     }
 
-    return @enumFromInt(bits);
+    return @fromBackingInt(@intCast(bits));
 }
 
 fn allSupportedProperties() types.TransitionProperty {

@@ -45,7 +45,7 @@ pub fn main(init: std.process.Init) !void {
     try stdout.print("right {d} {d} {d} {d}\n", .{ contract.f32Bits(right.bounding_box.x), contract.f32Bits(right.bounding_box.y), contract.f32Bits(right.bounding_box.width), contract.f32Bits(right.bounding_box.height) });
     for (commands.items()) |command| {
         try stdout.print("command {d} {d} {d} {d} {d} {d}\n", .{
-            @intFromEnum(command.command_type),
+            @backingInt(command.command_type),
             command.id,
             contract.f32Bits(command.bounding_box.x),
             contract.f32Bits(command.bounding_box.y),

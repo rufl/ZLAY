@@ -152,23 +152,23 @@ fn hashParagraphStyle(
     var hasher = Sha256.init(.{});
     hashParagraphScalar(u32, &hasher, style.font_stack_id);
     hashParagraphScalar(u32, &hasher, @bitCast(style.size_px));
-    hashParagraphScalar(u8, &hasher, @intFromEnum(style.direction));
+    hashParagraphScalar(u8, &hasher, @backingInt(style.direction));
     hashParagraphScalar(u8, &hasher, @intFromBool(style.script != null));
     if (style.script) |script| {
-        hashParagraphScalar(u32, &hasher, @intFromEnum(script));
+        hashParagraphScalar(u32, &hasher, @backingInt(script));
     }
     hashParagraphScalar(u64, &hasher, @intCast(style.language.len));
     hasher.update(style.language);
     hashParagraphScalar(u64, &hasher, @intCast(style.features.len));
     for (style.features) |feature| {
-        hashParagraphScalar(u32, &hasher, @intFromEnum(feature.tag));
+        hashParagraphScalar(u32, &hasher, @backingInt(feature.tag));
         hashParagraphScalar(u32, &hasher, feature.value);
         hashParagraphScalar(u32, &hasher, feature.byte_start);
         hashParagraphScalar(u32, &hasher, feature.byte_end);
     }
     hashParagraphScalar(u64, &hasher, @intCast(style.variations.len));
     for (style.variations) |variation| {
-        hashParagraphScalar(u32, &hasher, @intFromEnum(variation.tag));
+        hashParagraphScalar(u32, &hasher, @backingInt(variation.tag));
         hashParagraphScalar(u32, &hasher, @bitCast(variation.value));
     }
     hashParagraphScalar(u32, &hasher, @bitCast(style.letter_spacing_px));
@@ -184,9 +184,9 @@ fn hashParagraphStyle(
             hashParagraphScalar(u32, &hasher, @bitCast(value));
         },
     }
-    hashParagraphScalar(u8, &hasher, @intFromEnum(style.wrap));
-    hashParagraphScalar(u8, &hasher, @intFromEnum(style.alignment));
-    hashParagraphScalar(u8, &hasher, @intFromEnum(style.overflow));
+    hashParagraphScalar(u8, &hasher, @backingInt(style.wrap));
+    hashParagraphScalar(u8, &hasher, @backingInt(style.alignment));
+    hashParagraphScalar(u8, &hasher, @backingInt(style.overflow));
     hashParagraphScalar(u8, &hasher, @intFromBool(style.max_lines != null));
     if (style.max_lines) |max_lines| {
         hashParagraphScalar(u32, &hasher, max_lines);
@@ -4018,7 +4018,7 @@ pub const Context = struct {
                     },
                 );
                 runtime.old_parent_relative_position = relative_position;
-                if (@intFromEnum(changed) != 0) {
+                if (@backingInt(changed) != 0) {
                     runtime.elapsed_time = 0;
                     runtime.initial = runtime.current;
                     runtime.state = .transitioning;
@@ -4441,7 +4441,7 @@ const ParagraphProviderStateForTest = struct {
         };
         const logical_width = @min(request.available_width_px, 48);
         return .{ .value = .{
-            .handle = @enumFromInt(40 + self.layout_calls),
+            .handle = @fromBackingInt(@intCast(40 + self.layout_calls)),
             .generation = self.generation,
             .paragraph_metrics = .{
                 .logical = .{
@@ -4713,7 +4713,7 @@ test "provider path caches one final-width lease and transports it through custo
     try std.testing.expectEqual(types.RenderCommandType.custom, unrelated.command_type);
     try std.testing.expect(context.paragraphRenderData(unrelated) == null);
     try std.testing.expectEqual(first_data, second_data);
-    try std.testing.expectEqual(@as(u64, 41), @intFromEnum(first_data.lease.handle));
+    try std.testing.expectEqual(@as(u64, 41), @backingInt(first_data.lease.handle));
     try std.testing.expectEqual(@as(u64, 7), first_data.lease.generation);
     try std.testing.expectEqual(first_data.lease.paragraph_metrics.logical.advance.x, first.bounding_box.width);
     try std.testing.expectEqual(first_data.lease.paragraph_metrics.logical.advance.y, first.bounding_box.height);

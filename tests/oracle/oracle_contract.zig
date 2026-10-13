@@ -7,7 +7,7 @@ pub fn f32Bits(value: f32) u32 {
 
 pub fn failOnError(error_data: zlay.ErrorData) void {
     std.debug.print("unexpected oracle diagnostic {d}: {s}\n", .{
-        @intFromEnum(error_data.error_type),
+        @backingInt(error_data.error_type),
         error_data.error_text.asSlice(),
     });
     @panic("unexpected oracle diagnostic");

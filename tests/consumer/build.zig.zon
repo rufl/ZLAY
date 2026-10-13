@@ -2,7 +2,7 @@
     .name = .zlay_consumer_smoke,
     .version = "0.0.0",
     .fingerprint = 0x5b3e0998071b64c3,
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .zlay = .{ .path = "../.." },
     },

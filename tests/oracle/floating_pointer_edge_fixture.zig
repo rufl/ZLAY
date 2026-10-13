@@ -84,7 +84,7 @@ fn printCommand(out: *std.Io.Writer, label: []const u8, index: usize, command: z
     try out.print("command {s} {d} type {d} id {d} z {d} box {d} {d} {d} {d}\n", .{
         label,
         index,
-        @intFromEnum(command.command_type),
+        @backingInt(command.command_type),
         command.id,
         command.z_index,
         contract.f32Bits(command.bounding_box.x),
@@ -147,7 +147,7 @@ fn printPointer(out: *std.Io.Writer, context: *zlay.Context, label: []const u8) 
         label,
         contract.f32Bits(pointer.position.x),
         contract.f32Bits(pointer.position.y),
-        @intFromEnum(pointer.state),
+        @backingInt(pointer.state),
         over.len,
     });
     for (over) |id| try out.print(" {d}", .{id.id});
@@ -162,7 +162,7 @@ fn printQuery(out: *std.Io.Writer, label: []const u8, log: *const QueryLog) !voi
 
 fn printErrors(out: *std.Io.Writer, log: *const ErrorLog) !void {
     try out.print("errors {d}", .{log.length});
-    for (log.types[0..log.length]) |error_type| try out.print(" {d}", .{@intFromEnum(error_type)});
+    for (log.types[0..log.length]) |error_type| try out.print(" {d}", .{@backingInt(error_type)});
     try out.writeByte('\n');
 }
 

@@ -145,7 +145,7 @@ fn printScroll(out: *std.Io.Writer, context: *zlay.Context, label: []const u8, i
 
 fn printErrors(out: *std.Io.Writer, log: *const ErrorLog) !void {
     try out.print("errors {d}", .{log.length});
-    for (log.types[0..log.length]) |error_type| try out.print(" {d}", .{@intFromEnum(error_type)});
+    for (log.types[0..log.length]) |error_type| try out.print(" {d}", .{@backingInt(error_type)});
     try out.writeByte('\n');
 }
 
@@ -159,7 +159,7 @@ fn printFullCommands(out: *std.Io.Writer, frame: usize, context: *const zlay.Con
         try out.print("command {d} {d} type {d} id {d} z {d} box {d} {d} {d} {d} user {d}", .{
             frame,
             index,
-            @intFromEnum(command.command_type),
+            @backingInt(command.command_type),
             command.id,
             command.z_index,
             f32Bits(command.bounding_box.x),

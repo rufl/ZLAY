@@ -46,7 +46,7 @@ pub fn main(init: std.process.Init) !void {
     try out.print("pointer capacity {d} length {d}\n", .{ pointer_over.capacity, pointer_over.length });
     try out.print("error count {d} type {d} static {d}\n", .{
         errors.count,
-        @intFromEnum(errors.last_type),
+        @backingInt(errors.last_type),
         @intFromBool(errors.last_text_static),
     });
     try out.flush();

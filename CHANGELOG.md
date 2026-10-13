@@ -34,6 +34,9 @@ All notable changes to ZLAY are recorded here. The format follows
   clipped containers.
 
 ### Changed
+- Migrated the package, build graph, contracts, evidence fixtures, and CI to
+  Zig 0.17.0, including the new build argument/path APIs and reflection model.
+
 
 - `computeDirty` now skips stable subtrees only while their cached layout inputs
   remain unchanged, and bounded retained-tree destruction no longer recurses.

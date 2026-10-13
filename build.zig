@@ -222,7 +222,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&aarch64_hash_qemu_contract_tests.step);
 
     const fmt_check = b.addFmt(.{
-        .paths = &.{ "build.zig", "src", "examples", "tests/oracle", "tests/consumer" },
+        .paths = &.{ b.path("build.zig"), b.path("src"), b.path("examples"), b.path("tests/oracle"), b.path("tests/consumer") },
         .check = true,
     });
     const fmt_step = b.step("fmt-check", "Check Zig source formatting");
@@ -260,9 +260,9 @@ pub fn build(b: *std.Build) void {
             "scripts/aarch64_hash_evidence.py",
             "validate",
             "--repo-root",
-            b.pathFromRoot("."),
-            "--evidence",
         });
+        validate_evidence.addFileArg(b.path("."));
+        validate_evidence.addArg("--evidence");
         validate_evidence.addFileArg(.{ .cwd_relative = evidence_path });
         aarch64_evidence_validate_step.dependOn(&validate_evidence.step);
     } else {
@@ -283,9 +283,9 @@ pub fn build(b: *std.Build) void {
             "scripts/aarch64_hash_evidence.py",
             "import",
             "--repo-root",
-            b.pathFromRoot("."),
-            "--evidence",
         });
+        import_evidence.addFileArg(b.path("."));
+        import_evidence.addArg("--evidence");
         import_evidence.addFileArg(.{ .cwd_relative = aarch64_evidence.? });
         import_evidence.addArgs(&.{ "--output", aarch64_import_out.? });
         import_evidence.has_side_effects = true;
@@ -308,9 +308,9 @@ pub fn build(b: *std.Build) void {
             "scripts/aarch64_hash_review.py",
             "runner-record-validate",
             "--repo-root",
-            b.pathFromRoot("."),
-            "--evidence",
         });
+        validate_runner_record.addFileArg(b.path("."));
+        validate_runner_record.addArg("--evidence");
         validate_runner_record.addFileArg(.{ .cwd_relative = aarch64_evidence.? });
         validate_runner_record.addArg("--runner-record");
         validate_runner_record.addFileArg(.{ .cwd_relative = aarch64_runner_record.? });
@@ -364,9 +364,9 @@ pub fn build(b: *std.Build) void {
             "scripts/aarch64_hash_review.py",
             "review-create",
             "--repo-root",
-            b.pathFromRoot("."),
-            "--evidence",
         });
+        create_review_receipt.addFileArg(b.path("."));
+        create_review_receipt.addArg("--evidence");
         create_review_receipt.addFileArg(.{ .cwd_relative = aarch64_evidence.? });
         create_review_receipt.addArg("--runner-record");
         create_review_receipt.addFileArg(.{ .cwd_relative = aarch64_runner_record.? });
@@ -400,9 +400,9 @@ pub fn build(b: *std.Build) void {
             "scripts/aarch64_hash_review.py",
             "review-validate",
             "--repo-root",
-            b.pathFromRoot("."),
-            "--evidence",
         });
+        validate_review_receipt.addFileArg(b.path("."));
+        validate_review_receipt.addArg("--evidence");
         validate_review_receipt.addFileArg(.{ .cwd_relative = aarch64_evidence.? });
         validate_review_receipt.addArg("--runner-record");
         validate_review_receipt.addFileArg(.{ .cwd_relative = aarch64_runner_record.? });
@@ -473,7 +473,7 @@ pub fn build(b: *std.Build) void {
     });
     wasm_renderer_smoke.entry = .disabled;
     const wasm_runtime_step = b.step("wasm-runtime-smoke", "Execute the deterministic renderer smoke in WebAssembly");
-    const node = b.findProgram(&.{ "node", "nodejs" }, &.{}) catch null;
+    const node = b.findProgram(.{ .names = &.{ "node", "nodejs" } });
     if (node) |node_executable| {
         const run_wasm_renderer_smoke = b.addSystemCommand(&.{ node_executable, "tests/run_wasm_smoke.mjs" });
         run_wasm_renderer_smoke.addFileArg(wasm_renderer_smoke.getEmittedBin());
@@ -504,7 +504,7 @@ pub fn build(b: *std.Build) void {
 
     const c_oracle_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     c_oracle_module.addIncludePath(b.path("tests/oracle"));
@@ -524,7 +524,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/zig_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -536,7 +536,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/compare.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_compare = b.addRunArtifact(compare_oracles);
@@ -548,7 +548,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_header.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_header_checker = b.addRunArtifact(header_checker);
@@ -556,7 +556,7 @@ pub fn build(b: *std.Build) void {
 
     const complex_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     complex_c_module.addIncludePath(b.path("tests/oracle"));
@@ -576,7 +576,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/complex_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -589,7 +589,7 @@ pub fn build(b: *std.Build) void {
 
     const transition_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     transition_c_module.addIncludePath(b.path("tests/oracle"));
@@ -609,7 +609,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/transition_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -622,7 +622,7 @@ pub fn build(b: *std.Build) void {
 
     const transition_matrix_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     transition_matrix_c_module.addIncludePath(b.path("tests/oracle"));
@@ -642,7 +642,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/transition_matrix_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -655,7 +655,7 @@ pub fn build(b: *std.Build) void {
 
     const pointer_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     pointer_c_module.addIncludePath(b.path("tests/oracle"));
@@ -675,7 +675,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/pointer_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -688,7 +688,7 @@ pub fn build(b: *std.Build) void {
 
     const floating_pointer_edge_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     floating_pointer_edge_c_module.addIncludePath(b.path("tests/oracle"));
@@ -708,7 +708,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/floating_pointer_edge_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -721,7 +721,7 @@ pub fn build(b: *std.Build) void {
 
     const scroll_parity_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     scroll_parity_c_module.addIncludePath(b.path("tests/oracle"));
@@ -741,7 +741,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/scroll_parity_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -754,7 +754,7 @@ pub fn build(b: *std.Build) void {
 
     const external_scroll_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     external_scroll_c_module.addIncludePath(b.path("tests/oracle"));
@@ -774,7 +774,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/external_scroll_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -787,7 +787,7 @@ pub fn build(b: *std.Build) void {
 
     const render_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     render_c_module.addIncludePath(b.path("tests/oracle"));
@@ -807,7 +807,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/render_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -820,7 +820,7 @@ pub fn build(b: *std.Build) void {
 
     const sizing_text_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     sizing_text_c_module.addIncludePath(b.path("tests/oracle"));
@@ -840,7 +840,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/sizing_text_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -853,7 +853,7 @@ pub fn build(b: *std.Build) void {
 
     const string_text_edge_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     string_text_edge_c_module.addIncludePath(b.path("tests/oracle"));
@@ -873,7 +873,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/string_text_edge_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -886,7 +886,7 @@ pub fn build(b: *std.Build) void {
 
     const declaration_layout_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     declaration_layout_c_module.addIncludePath(b.path("tests/oracle"));
@@ -906,7 +906,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/declaration_layout_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -919,7 +919,7 @@ pub fn build(b: *std.Build) void {
 
     const api_diagnostics_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     api_diagnostics_c_module.addIncludePath(b.path("tests/oracle"));
@@ -939,7 +939,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/api_diagnostics_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -952,7 +952,7 @@ pub fn build(b: *std.Build) void {
 
     const debug_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     debug_c_module.addIncludePath(b.path("tests/oracle"));
@@ -972,7 +972,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/debug_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -985,7 +985,7 @@ pub fn build(b: *std.Build) void {
 
     const id_error_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     id_error_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1005,7 +1005,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/id_error_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1018,7 +1018,7 @@ pub fn build(b: *std.Build) void {
 
     const id_collision_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     id_collision_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1038,7 +1038,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/id_collision_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1051,7 +1051,7 @@ pub fn build(b: *std.Build) void {
 
     const duplicate_lookup_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     duplicate_lookup_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1071,7 +1071,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/duplicate_lookup_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1083,7 +1083,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_duplicate_lookup_divergence.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_duplicate_lookup_divergence_checker = b.addRunArtifact(duplicate_lookup_divergence_checker);
@@ -1092,7 +1092,7 @@ pub fn build(b: *std.Build) void {
 
     const capacity_match_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     capacity_match_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1112,7 +1112,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/capacity_match_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1124,7 +1124,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_capacity_match.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_capacity_match_checker = b.addRunArtifact(capacity_match_checker);
@@ -1133,7 +1133,7 @@ pub fn build(b: *std.Build) void {
 
     const invalid_access_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     invalid_access_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1153,7 +1153,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/invalid_render_access_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1162,7 +1162,7 @@ pub fn build(b: *std.Build) void {
 
     const element_capacity_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     element_capacity_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1182,7 +1182,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/element_capacity_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1191,7 +1191,7 @@ pub fn build(b: *std.Build) void {
 
     const text_capacity_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     text_capacity_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1211,7 +1211,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/text_capacity_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1220,7 +1220,7 @@ pub fn build(b: *std.Build) void {
 
     const render_scope_capacity_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     render_scope_capacity_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1242,7 +1242,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/render_scope_capacity_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1256,7 +1256,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_capacity_divergences.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_capacity_divergence_checker = b.addRunArtifact(capacity_divergence_checker);
@@ -1271,7 +1271,7 @@ pub fn build(b: *std.Build) void {
 
     const public_metadata_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     public_metadata_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1291,7 +1291,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/public_metadata_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1304,7 +1304,7 @@ pub fn build(b: *std.Build) void {
 
     const ease_out_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     ease_out_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1324,7 +1324,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/ease_out_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1337,7 +1337,7 @@ pub fn build(b: *std.Build) void {
 
     const hash_default_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     hash_default_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1357,7 +1357,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/hash_default_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1394,7 +1394,7 @@ pub fn build(b: *std.Build) void {
     const aarch64_qemu_zlay = b.createModule(.{
         .root_source_file = b.path("src/root.zig"),
         .target = aarch64_qemu_target,
-        .optimize = .Debug,
+        .optimize = .debug,
     });
     const aarch64_qemu_module_tests = b.addTest(.{
         .name = "zlay-aarch64-qemu-module-tests",
@@ -1407,14 +1407,14 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/ordinary_manifest.zig"),
             .target = aarch64_qemu_target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     aarch64_qemu_manifest_tests.linkage = .static;
 
     const aarch64_qemu_c_module = b.createModule(.{
         .target = aarch64_qemu_target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     aarch64_qemu_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1433,7 +1433,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/hash_default_fixture.zig"),
             .target = aarch64_qemu_target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = aarch64_qemu_zlay }},
         }),
         .linkage = .static,
@@ -1444,7 +1444,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/compare.zig"),
             .target = b.graph.host,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
         .linkage = .static,
     });
@@ -1453,7 +1453,7 @@ pub fn build(b: *std.Build) void {
         "aarch64-hash-qemu",
         "Execute the AArch64 hash contract and native tests under QEMU user mode without certification",
     );
-    const qemu_aarch64 = b.findProgram(&.{"qemu-aarch64"}, &.{}) catch null;
+    const qemu_aarch64 = b.findProgram(.{ .names = &.{"qemu-aarch64"} });
     if (qemu_aarch64) |qemu_exe| {
         const write_aarch64_qemu_embedded_build = b.addWriteFiles();
         const aarch64_qemu_embedded_build_zig = write_aarch64_qemu_embedded_build.add(
@@ -1466,9 +1466,9 @@ pub fn build(b: *std.Build) void {
             "scripts/aarch64_hash_qemu_report.py",
             "source-contract",
             "--repo-root",
-            b.pathFromRoot("."),
-            "--expected-build-zig-source",
         });
+        capture_aarch64_qemu_source_contract.addFileArg(b.path("."));
+        capture_aarch64_qemu_source_contract.addArg("--expected-build-zig-source");
         capture_aarch64_qemu_source_contract.addFileArg(aarch64_qemu_embedded_build_zig);
         capture_aarch64_qemu_source_contract.has_side_effects = true;
         const aarch64_qemu_source_contract = capture_aarch64_qemu_source_contract.captureStdOut(.{
@@ -1529,13 +1529,13 @@ pub fn build(b: *std.Build) void {
             "scripts/aarch64_hash_qemu_report.py",
             "report",
             "--repo-root",
-            b.pathFromRoot("."),
-            "--qemu",
-            qemu_exe,
-            "--zig",
-            b.graph.zig_exe,
-            "--c-trace",
         });
+        run_aarch64_qemu_report.addFileArg(b.path("."));
+        run_aarch64_qemu_report.addArg("--qemu");
+        run_aarch64_qemu_report.addArg(qemu_exe);
+        run_aarch64_qemu_report.addArg("--zig");
+        run_aarch64_qemu_report.addArg(b.graph.zig_exe);
+        run_aarch64_qemu_report.addArg("--c-trace");
         run_aarch64_qemu_report.addFileArg(aarch64_qemu_c_output);
         run_aarch64_qemu_report.addArg("--zig-trace");
         run_aarch64_qemu_report.addFileArg(aarch64_qemu_zig_output);
@@ -1573,7 +1573,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_native_aarch64_host.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
 
@@ -1632,11 +1632,11 @@ pub fn build(b: *std.Build) void {
                 "scripts/aarch64_hash_evidence.py",
                 "snapshot",
                 "--repo-root",
-                b.pathFromRoot("."),
-                "--expected-build-zig-sha256",
-                embedded_build_zig_sha256[0..],
-                "--output",
             });
+            capture_source_snapshot.addFileArg(b.path("."));
+            capture_source_snapshot.addArg("--expected-build-zig-sha256");
+            capture_source_snapshot.addArg(embedded_build_zig_sha256[0..]);
+            capture_source_snapshot.addArg("--output");
             capture_source_snapshot.has_side_effects = true;
             const certification_source_snapshot = capture_source_snapshot.addOutputFileArg(
                 "aarch64-certification-input-snapshot.json",
@@ -1708,11 +1708,11 @@ pub fn build(b: *std.Build) void {
                 "scripts/aarch64_hash_evidence.py",
                 "capture",
                 "--repo-root",
-                b.pathFromRoot("."),
-                "--output",
-                aarch64_evidence_out.?,
-                "--header",
             });
+            capture_evidence.addFileArg(b.path("."));
+            capture_evidence.addArg("--output");
+            capture_evidence.addArg(aarch64_evidence_out.?);
+            capture_evidence.addArg("--header");
             capture_evidence.has_side_effects = true;
             capture_evidence.addFileArg(b.path("tests/oracle/clay.h"));
             capture_evidence.addArg("--source-snapshot");
@@ -1788,7 +1788,7 @@ pub fn build(b: *std.Build) void {
 
     const parity_regression_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     parity_regression_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1808,7 +1808,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/parity_regression_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1821,7 +1821,7 @@ pub fn build(b: *std.Build) void {
 
     const public_values_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     public_values_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1841,7 +1841,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/public_values_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1854,7 +1854,7 @@ pub fn build(b: *std.Build) void {
 
     const layout_scroll_breadth_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     layout_scroll_breadth_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1874,7 +1874,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/layout_scroll_breadth_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1887,7 +1887,7 @@ pub fn build(b: *std.Build) void {
 
     const text_cache_lifecycle_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     text_cache_lifecycle_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1907,7 +1907,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/text_cache_lifecycle_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1920,7 +1920,7 @@ pub fn build(b: *std.Build) void {
 
     const text_cache_runtime_setter_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     text_cache_runtime_setter_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1940,7 +1940,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/text_cache_runtime_setter_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1953,7 +1953,7 @@ pub fn build(b: *std.Build) void {
 
     const transition_lifecycle_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     transition_lifecycle_c_module.addIncludePath(b.path("tests/oracle"));
@@ -1973,7 +1973,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/transition_lifecycle_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -1985,7 +1985,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_transition_lifecycle.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_transition_lifecycle_checker = b.addRunArtifact(transition_lifecycle_checker);
@@ -1994,7 +1994,7 @@ pub fn build(b: *std.Build) void {
 
     const scroll_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     scroll_c_module.addIncludePath(b.path("tests/oracle"));
@@ -2014,7 +2014,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/scroll_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -2026,7 +2026,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_scroll_divergence.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_scroll_divergence_checker = b.addRunArtifact(scroll_divergence_checker);
@@ -2035,7 +2035,7 @@ pub fn build(b: *std.Build) void {
 
     const safety_divergence_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     safety_divergence_c_module.addIncludePath(b.path("tests/oracle"));
@@ -2055,7 +2055,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/safety_divergence_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -2067,7 +2067,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_safety_divergences.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_safety_divergence_checker = b.addRunArtifact(safety_divergence_checker);
@@ -2076,7 +2076,7 @@ pub fn build(b: *std.Build) void {
 
     const retained_context_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     retained_context_c_module.addIncludePath(b.path("tests/oracle"));
@@ -2096,7 +2096,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/retained_context_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -2108,7 +2108,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_retained_context_divergences.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_retained_context_checker = b.addRunArtifact(retained_context_checker);
@@ -2117,7 +2117,7 @@ pub fn build(b: *std.Build) void {
 
     const no_open_api_c_module = b.createModule(.{
         .target = target,
-        .optimize = .Debug,
+        .optimize = .debug,
         .link_libc = true,
     });
     no_open_api_c_module.addIncludePath(b.path("tests/oracle"));
@@ -2137,7 +2137,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/no_open_api_fixture.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
             .imports = &.{.{ .name = "zlay", .module = zlay }},
         }),
     });
@@ -2149,7 +2149,7 @@ pub fn build(b: *std.Build) void {
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/oracle/check_no_open_api_divergence.zig"),
             .target = target,
-            .optimize = .Debug,
+            .optimize = .debug,
         }),
     });
     const run_no_open_api_checker = b.addRunArtifact(no_open_api_checker);

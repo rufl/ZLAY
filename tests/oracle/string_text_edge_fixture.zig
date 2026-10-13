@@ -293,7 +293,7 @@ fn printExitRecords(out: *std.Io.Writer, frame: usize) !void {
         try out.print("frame {d} exit {d} state {d} elapsed {x:0>8} duration {x:0>8}\n", .{
             frame,
             index,
-            @intFromEnum(record.state),
+            @backingInt(record.state),
             contract.f32Bits(record.elapsed),
             contract.f32Bits(record.duration),
         });
@@ -303,7 +303,7 @@ fn printExitRecords(out: *std.Io.Writer, frame: usize) !void {
 fn printErrorRecords(out: *std.Io.Writer, frame: usize) !void {
     try out.print("frame {d} errors {d}", .{ frame, error_record_count });
     for (error_records[0..error_record_count]) |error_type| {
-        try out.print(" {d}", .{@intFromEnum(error_type)});
+        try out.print(" {d}", .{@backingInt(error_type)});
     }
     try out.writeByte('\n');
 }

@@ -2,9 +2,9 @@ const std = @import("std");
 const zlay = @import("zlay");
 const contract = @import("oracle_contract.zig");
 
-const animated_properties: zlay.TransitionProperty = @enumFromInt(
-    @intFromEnum(zlay.TransitionProperty.x) | @intFromEnum(zlay.TransitionProperty.background_color),
-);
+const animated_properties: zlay.TransitionProperty = @fromBackingInt(@intCast(
+    @backingInt(zlay.TransitionProperty.x) | @backingInt(zlay.TransitionProperty.background_color),
+));
 
 const CallbackRecord = struct {
     state: zlay.TransitionState,
@@ -155,8 +155,8 @@ fn printFrame(stdout: *std.Io.Writer, context: *const zlay.Context, frame: usize
     for (callback_records[0..callback_count]) |record| {
         try stdout.print("callback {d} {d} {d} {d} before ", .{
             frame,
-            @intFromEnum(record.state),
-            @intFromEnum(record.properties),
+            @backingInt(record.state),
+            @backingInt(record.properties),
             contract.f32Bits(record.elapsed),
         });
         try printTransitionData(stdout, record.before);

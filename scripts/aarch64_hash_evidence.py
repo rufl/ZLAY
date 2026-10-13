@@ -391,8 +391,8 @@ def load_source_snapshot(path: Path, repo_root: Path) -> dict[str, Any]:
 def _validate_zig_version(version: Any) -> str:
     version = _require_string(version, "toolchain.zig_version", maximum=128)
     match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$", version)
-    if match is None or tuple(map(int, match.groups()))[:2] != (0, 16):
-        raise EvidenceError("toolchain.zig_version must be within the Zig 0.16 compatibility line")
+    if match is None or tuple(map(int, match.groups()))[:2] != (0, 17):
+        raise EvidenceError("toolchain.zig_version must be within the Zig 0.17 compatibility line")
     return version
 
 

@@ -313,9 +313,9 @@ def _require_source_pre_gate(success: str) -> None:
         r"b\.addSystemCommand\(\s*&\.\{\s*"
         r'"python3"\s*,\s*"-B"\s*,\s*'
         r'"scripts/aarch64_hash_qemu_report\.py"\s*,\s*'
-        r'"source-contract"\s*,\s*"--repo-root"\s*,\s*'
-        r'b\.pathFromRoot\(\s*"\."\s*\)\s*,\s*'
-        r'"--expected-build-zig-source"\s*,?\s*\}\s*\)\s*;\s*'
+        r'"source-contract"\s*,\s*"--repo-root"\s*,?\s*\}\s*\)\s*;\s*'
+        r'capture_aarch64_qemu_source_contract\.addFileArg\(\s*b\.path\(\s*"\."\s*\)\s*\)\s*;\s*'
+        r'capture_aarch64_qemu_source_contract\.addArg\(\s*"--expected-build-zig-source"\s*\)\s*;\s*'
         r"capture_aarch64_qemu_source_contract\.addFileArg\(\s*"
         r"aarch64_qemu_embedded_build_zig\s*\)\s*;\s*"
         r"capture_aarch64_qemu_source_contract\.has_side_effects\s*=\s*"
@@ -335,10 +335,10 @@ def _require_source_pre_gate(success: str) -> None:
     capture_uses = len(
         re.findall(r"\bcapture_aarch64_qemu_source_contract\.", success)
     )
-    if capture_uses != 8:
+    if capture_uses != 10:
         _fail(
             "source-contract pre-gate operation count differs; "
-            f"expected 8, found {capture_uses}"
+            f"expected 10, found {capture_uses}"
         )
     if len(re.findall(r"\bwrite_aarch64_qemu_embedded_build\.", success)) != 1:
         _fail("QEMU pre-gate must generate exactly one embedded build.zig file")
@@ -408,7 +408,7 @@ def _require_artifacts(lane: str) -> None:
             r"const\s+aarch64_qemu_zlay\s*=\s*b\.createModule\(\.\{\s*"
             r"\.root_source_file\s*=\s*b\.path\(\"src/root\.zig\"\)\s*,\s*"
             r"\.target\s*=\s*aarch64_qemu_target\s*,\s*"
-            r"\.optimize\s*=\s*\.Debug\s*,\s*\}\s*\)\s*;"
+            r"\.optimize\s*=\s*\.debug\s*,\s*\}\s*\)\s*;"
         ),
         "static root test artifact": (
             r"const\s+aarch64_qemu_module_tests\s*=\s*b\.addTest\(\.\{\s*"
@@ -422,13 +422,13 @@ def _require_artifacts(lane: str) -> None:
             r"\.root_module\s*=\s*b\.createModule\(\.\{\s*"
             r"\.root_source_file\s*=\s*b\.path\(\"tests/oracle/ordinary_manifest\.zig\"\)\s*,\s*"
             r"\.target\s*=\s*aarch64_qemu_target\s*,\s*"
-            r"\.optimize\s*=\s*\.Debug\s*,\s*\}\s*\)\s*,\s*\}\s*\)\s*;\s*"
+            r"\.optimize\s*=\s*\.debug\s*,\s*\}\s*\)\s*,\s*\}\s*\)\s*;\s*"
             r"aarch64_qemu_manifest_tests\.linkage\s*=\s*\.static\s*;"
         ),
         "pinned C module": (
             r"const\s+aarch64_qemu_c_module\s*=\s*b\.createModule\(\.\{\s*"
             r"\.target\s*=\s*aarch64_qemu_target\s*,\s*"
-            r"\.optimize\s*=\s*\.Debug\s*,\s*"
+            r"\.optimize\s*=\s*\.debug\s*,\s*"
             r"\.link_libc\s*=\s*true\s*,\s*\}\s*\)\s*;\s*"
             r"aarch64_qemu_c_module\.addIncludePath\(b\.path\(\"tests/oracle\"\)\)\s*;\s*"
             r"aarch64_qemu_c_module\.addCSourceFile\(\.\{\s*"
@@ -447,7 +447,7 @@ def _require_artifacts(lane: str) -> None:
             r"\.root_module\s*=\s*b\.createModule\(\.\{\s*"
             r"\.root_source_file\s*=\s*b\.path\(\"tests/oracle/hash_default_fixture\.zig\"\)\s*,\s*"
             r"\.target\s*=\s*aarch64_qemu_target\s*,\s*"
-            r"\.optimize\s*=\s*\.Debug\s*,\s*"
+            r"\.optimize\s*=\s*\.debug\s*,\s*"
             r"\.imports\s*=\s*&\.\{\.\{\s*\.name\s*=\s*\"zlay\"\s*,\s*"
             r"\.module\s*=\s*aarch64_qemu_zlay\s*\}\}\s*,\s*\}\s*\)\s*,\s*"
             r"\.linkage\s*=\s*\.static\s*,\s*\}\s*\)\s*;"
@@ -458,7 +458,7 @@ def _require_artifacts(lane: str) -> None:
             r"\.root_module\s*=\s*b\.createModule\(\.\{\s*"
             r"\.root_source_file\s*=\s*b\.path\(\"tests/oracle/compare\.zig\"\)\s*,\s*"
             r"\.target\s*=\s*b\.graph\.host\s*,\s*"
-            r"\.optimize\s*=\s*\.Debug\s*,\s*\}\s*\)\s*,\s*"
+            r"\.optimize\s*=\s*\.debug\s*,\s*\}\s*\)\s*,\s*"
             r"\.linkage\s*=\s*\.static\s*,\s*\}\s*\)\s*;"
         ),
     }
@@ -469,7 +469,7 @@ def _require_artifacts(lane: str) -> None:
     if linkages != [".linkage = .static"] * 5:
         _fail(f"QEMU lane linkage pins differ; found {linkages!r}")
     optimizations = re.findall(r"\.optimize\s*=\s*\.[A-Za-z0-9_]+", lane)
-    if optimizations != [".optimize = .Debug"] * 5:
+    if optimizations != [".optimize = .debug"] * 5:
         _fail(f"QEMU lane optimization pins differ; found {optimizations!r}")
 
 
@@ -484,10 +484,9 @@ def _require_step_and_resolver(lane: str) -> None:
     )
     _require_top_level_once(
         lane,
-        r"const\s+qemu_aarch64\s*=\s*b\.findProgram\(\s*&\.\{\s*"
-        r"\"qemu-aarch64\"\s*\}\s*,\s*&\.\{\s*\}\s*\)\s*catch\s+null\s*;",
+        r"const\s+qemu_aarch64\s*=\s*b\.findProgram\(\s*"
+        r"\.\{\s*\.names\s*=\s*&\.\{\s*\"qemu-aarch64\"\s*\}\s*\}\s*\)\s*;",
         "resolved qemu-aarch64 executable",
-        flags=re.DOTALL,
     )
 
 
@@ -617,11 +616,13 @@ def _require_reporter(success: str) -> None:
     chain = (
         r"const\s+run_aarch64_qemu_report\s*=\s*b\.addSystemCommand\(\s*&\.\{\s*"
         r'"python3"\s*,\s*"-B"\s*,\s*"scripts/aarch64_hash_qemu_report\.py"\s*,\s*'
-        r'"report"\s*,\s*'
-        r'"--repo-root"\s*,\s*b\.pathFromRoot\(\s*"\."\s*\)\s*,\s*'
-        r'"--qemu"\s*,\s*qemu_exe\s*,\s*'
-        r'"--zig"\s*,\s*b\.graph\.zig_exe\s*,\s*'
-        r'"--c-trace"\s*,?\s*\}\s*\)\s*;\s*'
+        r'"report"\s*,\s*"--repo-root"\s*,?\s*\}\s*\)\s*;\s*'
+        r'run_aarch64_qemu_report\.addFileArg\(\s*b\.path\(\s*"\."\s*\)\s*\)\s*;\s*'
+        r'run_aarch64_qemu_report\.addArg\(\s*"--qemu"\s*\)\s*;\s*'
+        r"run_aarch64_qemu_report\.addArg\(\s*qemu_exe\s*\)\s*;\s*"
+        r'run_aarch64_qemu_report\.addArg\(\s*"--zig"\s*\)\s*;\s*'
+        r"run_aarch64_qemu_report\.addArg\(\s*b\.graph\.zig_exe\s*\)\s*;\s*"
+        r'run_aarch64_qemu_report\.addArg\(\s*"--c-trace"\s*\)\s*;\s*'
         r"run_aarch64_qemu_report\.addFileArg\(\s*aarch64_qemu_c_output\s*\)\s*;\s*"
         r"run_aarch64_qemu_report\.addArg\(\s*\"--zig-trace\"\s*\)\s*;\s*"
         r"run_aarch64_qemu_report\.addFileArg\(\s*aarch64_qemu_zig_output\s*\)\s*;\s*"
@@ -652,9 +653,8 @@ def _require_reporter(success: str) -> None:
         flags=re.DOTALL,
     )
     uses = len(re.findall(r"\brun_aarch64_qemu_report\.", success))
-    if uses != 23:
-        _fail(f"QEMU reporter operation count differs; expected 23, found {uses}")
-
+    if uses != 29:
+        _fail(f"QEMU reporter operation count differs; expected 29, found {uses}")
 
 def _require_dependencies(success: str, active_source: str) -> None:
     matches = list(

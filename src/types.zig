@@ -479,13 +479,13 @@ pub const TransitionProperty = enum(u16) {
     _,
 
     pub fn contains(self: TransitionProperty, property: TransitionProperty) bool {
-        const bits = @intFromEnum(self);
-        const property_bits = @intFromEnum(property);
+        const bits = @backingInt(self);
+        const property_bits = @backingInt(property);
         return (bits & property_bits) == property_bits;
     }
 
     pub fn merge(self: TransitionProperty, property: TransitionProperty) TransitionProperty {
-        return @enumFromInt(@intFromEnum(self) | @intFromEnum(property));
+        return @fromBackingInt(@intCast(@backingInt(self) | @backingInt(property)));
     }
 };
 
@@ -752,8 +752,8 @@ test "uniform padding, radius, and border helpers initialize every side" {
 }
 
 test "transition properties retain their upstream bit values" {
-    try std.testing.expectEqual(@as(u16, 15), @intFromEnum(TransitionProperty.bounding_box));
-    try std.testing.expectEqual(@as(u16, 384), @intFromEnum(TransitionProperty.border));
+    try std.testing.expectEqual(@as(u16, 15), @backingInt(TransitionProperty.bounding_box));
+    try std.testing.expectEqual(@as(u16, 384), @backingInt(TransitionProperty.border));
 
     const combined = TransitionProperty.x.merge(.background_color);
     try std.testing.expect(combined.contains(.x));
@@ -782,7 +782,7 @@ test "native strings and bounded command arrays expose safe slices" {
         .length = ids.len,
         .internal_array = &ids,
     };
-    try std.testing.expect(@typeInfo(@TypeOf(id_array.items())).pointer.is_const);
+    try std.testing.expect(@typeInfo(@TypeOf(id_array.items())).pointer.attrs.@"const");
     try std.testing.expectEqual(@as(u32, 7), id_array.items()[0].id);
 }
 

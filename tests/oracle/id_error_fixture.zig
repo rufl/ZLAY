@@ -30,7 +30,7 @@ fn printId(out: *std.Io.Writer, label: []const u8, id: zlay.ElementId) !void {
 
 fn printErrors(out: *std.Io.Writer, log: *const ErrorLog) !void {
     try out.print("errors {d}", .{log.length});
-    for (log.types[0..log.length]) |error_type| try out.print(" {d}", .{@intFromEnum(error_type)});
+    for (log.types[0..log.length]) |error_type| try out.print(" {d}", .{@backingInt(error_type)});
     try out.writeByte('\n');
 }
 

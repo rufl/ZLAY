@@ -31,7 +31,7 @@ fn printHoverLog(out: *std.Io.Writer, label: []const u8, log: *const HoverLog) !
     for (log.events[0..log.length]) |event| {
         try out.print(" {d}:{d}:{d}:{d}", .{
             event.id,
-            @intFromEnum(event.pointer.state),
+            @backingInt(event.pointer.state),
             contract.f32Bits(event.pointer.position.x),
             contract.f32Bits(event.pointer.position.y),
         });
@@ -46,7 +46,7 @@ fn printPointer(out: *std.Io.Writer, context: *zlay.Context, label: []const u8) 
         label,
         contract.f32Bits(pointer.position.x),
         contract.f32Bits(pointer.position.y),
-        @intFromEnum(pointer.state),
+        @backingInt(pointer.state),
         over.len,
     });
     for (over) |element_id| try out.print(" {d}", .{element_id.id});

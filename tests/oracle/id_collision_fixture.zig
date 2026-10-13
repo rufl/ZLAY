@@ -66,7 +66,7 @@ pub fn main(init: std.process.Init) !void {
     try printElement(out, &context, "alpha", alpha);
     try printElement(out, &context, "delta", delta);
     try out.print("errors {d}", .{error_log.length});
-    for (error_log.types[0..error_log.length]) |error_type| try out.print(" {d}", .{@intFromEnum(error_type)});
+    for (error_log.types[0..error_log.length]) |error_type| try out.print(" {d}", .{@backingInt(error_type)});
     try out.writeByte('\n');
     try out.flush();
 }

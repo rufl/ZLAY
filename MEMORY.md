@@ -13,7 +13,7 @@
   query supports assistive or remote adapters without exposing row storage.
 - Push/PR CI runs the bounded C-free check; a separate read-only manual/weekly
   workflow runs the complete aggregate matrix.
-- Maintained local gate: `zig build verify-all` with Zig 0.16.0.
+- Maintained local gate: `zig build verify-all` with Zig 0.17.0.
 - The only open proof item is physical AArch64 target-default hash execution;
   the 2026-08-02 QEMU 11.0.3 refresh passes 209/210 module tests plus 4/4
   manifest tests but remains supplemental and cannot close it.
@@ -45,8 +45,8 @@
 
 ## Gotchas
 
-- This repository requires Zig 0.16.x; `/usr/bin/zig` is the validated local
-  binary in this workspace.
+- This repository requires Zig 0.17.x; the validated local compiler for this
+  workspace is Zig 0.17.0.
 - Do not edit `tests/oracle/clay.h` without updating the explicit upstream pin
   and every dependent parity artifact.
 - Do not retain paragraph command pointers across Context mutation; retain the

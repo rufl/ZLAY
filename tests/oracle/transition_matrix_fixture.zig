@@ -2,13 +2,13 @@ const std = @import("std");
 const zlay = @import("zlay");
 const contract = @import("oracle_contract.zig");
 
-const all_transition_properties: zlay.TransitionProperty = @enumFromInt(
-    @intFromEnum(zlay.TransitionProperty.bounding_box) |
-        @intFromEnum(zlay.TransitionProperty.background_color) |
-        @intFromEnum(zlay.TransitionProperty.overlay_color) |
-        @intFromEnum(zlay.TransitionProperty.corner_radius) |
-        @intFromEnum(zlay.TransitionProperty.border),
-);
+const all_transition_properties: zlay.TransitionProperty = @fromBackingInt(@intCast(
+    @backingInt(zlay.TransitionProperty.bounding_box) |
+        @backingInt(zlay.TransitionProperty.background_color) |
+        @backingInt(zlay.TransitionProperty.overlay_color) |
+        @backingInt(zlay.TransitionProperty.corner_radius) |
+        @backingInt(zlay.TransitionProperty.border),
+));
 
 const EventRecord = struct {
     tag: i32,
@@ -486,7 +486,7 @@ fn printCommand(out: *std.Io.Writer, frame: usize, index: usize, command: zlay.R
     try out.print("frame {d} command {d} type {d} id {d} z {d} box {d} {d} {d} {d}", .{
         frame,
         index,
-        @intFromEnum(command.command_type),
+        @backingInt(command.command_type),
         command.id,
         command.z_index,
         contract.f32Bits(command.bounding_box.x),
@@ -615,8 +615,8 @@ fn runFrame(context: *zlay.Context, out: *std.Io.Writer, frame: usize, delta_tim
             frame,
             index,
             event.tag,
-            @intFromEnum(event.state),
-            @intFromEnum(event.properties),
+            @backingInt(event.state),
+            @backingInt(event.properties),
             contract.f32Bits(event.elapsed),
             contract.f32Bits(event.duration),
         });

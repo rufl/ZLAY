@@ -49,7 +49,7 @@ pub fn main(init: std.process.Init) !void {
     const out = &stdout_writer.interface;
     try out.writeAll("limits element 4 text 32\ntext-attempts 4\n");
     try out.print("errors {d}", .{error_log.length});
-    for (error_log.types[0..error_log.length]) |error_type| try out.print(" {d}", .{@intFromEnum(error_type)});
+    for (error_log.types[0..error_log.length]) |error_type| try out.print(" {d}", .{@backingInt(error_type)});
     try out.writeByte('\n');
     try out.print("commands {d}\n", .{commands.length});
     for (commands.items(), 0..) |command, index| {
@@ -59,7 +59,7 @@ pub fn main(init: std.process.Init) !void {
             0;
         try out.print("command {d} type {d} id {d} text {d}\n", .{
             index,
-            @intFromEnum(command.command_type),
+            @backingInt(command.command_type),
             command.id,
             text_length,
         });

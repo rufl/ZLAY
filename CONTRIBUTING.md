@@ -5,7 +5,7 @@ back to the pinned upstream source and easy to disprove when they diverge.
 
 ## Local gate
 
-Use Zig 0.16.0 or newer within the 0.16 compatibility line. Repository audit,
+Use Zig 0.17.0 or newer within the 0.17 compatibility line. Repository audit,
 evidence, and review gates also require Python 3.10 or newer. The full gate
 requires Clang, `llvm-profdata`, and `llvm-cov` for the pinned-source coverage
 contract. Node.js lets the complete gate execute, rather than merely compile,

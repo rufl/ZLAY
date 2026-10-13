@@ -15,7 +15,7 @@ inspector.
 | Pinned-source accountability | Closed for the host scalar/common profile and native x86-64 SIMD supplement through fail-closed line, function, and branch-direction accounting. |
 | Physical AArch64 certification | Externally blocked: no qualifying runner or resulting artifact set is available in this checkout. |
 | Rendering and fonts | Application-owned by design; ZLAY emits commands and optional paragraph leases but does not rasterize. |
-| Maintained aggregate gate | `zig build verify-all` on Zig 0.16.0. |
+| Maintained aggregate gate | `zig build verify-all` on Zig 0.17.0. |
 | First release candidate | `0.1.0` is locally finalized; publication remains blocked on the canonical remote, hosted CI, signing, and immutable URL proof. |
 | First release support scope | Verified native x86-64 Linux plus the maintained `wasm32-freestanding` compile and Node runtime smoke; AArch64 remains explicitly uncertified. |
 
@@ -41,7 +41,7 @@ choosing a concrete backend.
 
 ## Requirements and dependency setup
 
-ZLAY currently requires Zig 0.16.0. Python 3.10 or newer is required by
+ZLAY currently requires Zig 0.17.0. Python 3.10 or newer is required by
 repository audit, evidence, and review gates. Full repository verification also
 requires Bash, Clang, `llvm-profdata`, `llvm-cov`, and ripgrep (`rg`). Node.js is required by `zig build check` for the freestanding-WebAssembly
 runtime smoke. `qemu-aarch64` is optional contributor tooling for the

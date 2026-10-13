@@ -329,13 +329,20 @@ def _require_fresh_runs(success: str) -> None:
     if re.fullmatch(
         r'\s*"python3"\s*,\s*"-B"\s*,\s*'
         r'"scripts/aarch64_hash_evidence\.py"\s*,\s*"capture"\s*,\s*'
-        r'"--repo-root"\s*,\s*b\.pathFromRoot\(\s*"\."\s*\)\s*,\s*'
-        r'"--output"\s*,\s*aarch64_evidence_out\.\?\s*,\s*'
-        r'"--header"\s*,?\s*',
+        r'"--repo-root"\s*,?\s*',
         command,
         re.DOTALL,
     ) is None:
         _fail("final evidence writer command arguments differ")
+    _require_top_level_once(
+        success,
+        r"\bcapture_evidence\.addFileArg\(b\.path\(\"\.\"\)\);\s*"
+        r"capture_evidence\.addArg\(\"--output\"\);\s*"
+        r"capture_evidence\.addArg\(aarch64_evidence_out\.\?\);\s*"
+        r"capture_evidence\.addArg\(\"--header\"\);",
+        "final evidence writer argument bindings",
+        flags=re.DOTALL,
+    )
     _require_top_level_once(
         success,
         r"\bcapture_evidence\.has_side_effects\s*=\s*true\s*;",
@@ -358,9 +365,6 @@ def _require_source_snapshot(success: str) -> None:
         "scripts/aarch64_hash_evidence.py",
         "snapshot",
         "--repo-root",
-        ".",
-        "--expected-build-zig-sha256",
-        "--output",
     ]
     if string_tokens != expected_tokens:
         _fail(
@@ -368,14 +372,13 @@ def _require_source_snapshot(success: str) -> None:
             f"expected {expected_tokens!r}, found {string_tokens!r}"
         )
     _require_once(
-        command,
-        r'"--repo-root"\s*,\s*b\.pathFromRoot\("\."\)',
-        "snapshot repository-root binding",
-    )
-    _require_once(
-        command,
-        r'"--expected-build-zig-sha256"\s*,\s*embedded_build_zig_sha256\[0\.\.\]',
-        "snapshot embedded build.zig digest binding",
+        success,
+        r"\bcapture_source_snapshot\.addFileArg\(b\.path\(\"\.\"\)\);\s*"
+        r"capture_source_snapshot\.addArg\(\"--expected-build-zig-sha256\"\);\s*"
+        r"capture_source_snapshot\.addArg\(embedded_build_zig_sha256\[0\.\.\]\);\s*"
+        r"capture_source_snapshot\.addArg\(\"--output\"\);",
+        "snapshot repository-root and digest bindings",
+        flags=re.DOTALL,
     )
     _require_top_level_once(
         success,
@@ -629,6 +632,10 @@ def _require_exact_capture_calls(
     constructor: re.Match[str],
 ) -> list[str]:
     expected = [
+        ("addFileArg", r'\s*b\.path\(\s*"."\s*\)\s*'),
+        ("addArg", r'\s*"--output"\s*'),
+        ("addArg", r"\s*aarch64_evidence_out\.\?\s*"),
+        ("addArg", r'\s*"--header"\s*'),
         ("addFileArg", r'\s*b\.path\(\s*"tests/oracle/clay\.h"\s*\)\s*'),
         ("addArg", r'\s*"--source-snapshot"\s*'),
         ("addFileArg", r"\s*certification_source_snapshot\s*"),
@@ -649,8 +656,8 @@ def _require_exact_capture_calls(
             r'\s*&\.\{\s*'
             r'"--zig-exe"\s*,\s*b\.graph\.zig_exe\s*,\s*'
             r'"--optimize"\s*,\s*@tagName\(\s*optimize\s*\)\s*,\s*'
-            r'"--target-triple"\s*,\s*target\.result\.zigTriple\(\s*b\.allocator\s*\)\s*'
-            r'catch\s+@panic\(\s*"OOM"\s*\)\s*,\s*'
+            r'"--target-triple"\s*,\s*target\.result\.zigTriple\(\s*b\.allocator\s*\)'
+            r'\s*catch\s+@panic\(\s*"OOM"\s*\)\s*,\s*'
             r'"--target-arch"\s*,\s*@tagName\(\s*target\.result\.cpu\.arch\s*\)\s*,\s*'
             r'"--target-os"\s*,\s*@tagName\(\s*target\.result\.os\.tag\s*\)\s*,\s*'
             r'"--target-abi"\s*,\s*@tagName\(\s*target\.result\.abi\s*\)\s*,\s*'
@@ -717,8 +724,8 @@ def _require_exact_capture_calls(
 
 def _require_cli_bindings(success: str) -> None:
     patterns = {
-        "--output": r'"--output"\s*,\s*aarch64_evidence_out\.\?',
-        "--header": r'"--header"[\s\S]*?capture_evidence\.addFileArg\(b\.path\("tests/oracle/clay\.h"\)\)\s*;',
+        "--output": r'capture_evidence\.addArg\("--output"\)\s*;\s*capture_evidence\.addArg\(aarch64_evidence_out\.\?\)\s*;',
+        "--header": r'capture_evidence\.addArg\("--header"\)[\s\S]*?capture_evidence\.addFileArg\(b\.path\("tests/oracle/clay\.h"\)\)\s*;',
         "--source-snapshot": r'capture_evidence\.addArg\("--source-snapshot"\)\s*;\s*capture_evidence\.addFileArg\(certification_source_snapshot\)\s*;',
         "--runner-preflight": r'capture_evidence\.addArg\("--runner-preflight"\)\s*;\s*capture_evidence\.addFileArg\(certification_runner_preflight\)\s*;',
         "--module-tests-log": r'capture_evidence\.addArg\("--module-tests-log"\)\s*;\s*capture_evidence\.addFileArg\(aarch64_module_tests_log\)\s*;',
@@ -751,8 +758,13 @@ def _require_cli_bindings(success: str) -> None:
     capture_command = capture_constructor.group("command")
     _require_once(
         capture_command,
-        r'"--repo-root"\s*,\s*b\.pathFromRoot\("\."\)',
+        r'"--repo-root"\s*,?',
         "--repo-root CLI binding",
+    )
+    _require_once(
+        success,
+        r"\bcapture_evidence\.addFileArg\(b\.path\(\"\.\"\)\);",
+        "--repo-root CLI path binding",
     )
     for option, pattern in patterns.items():
         _require_once(success, pattern, f"{option} CLI binding", flags=re.DOTALL)

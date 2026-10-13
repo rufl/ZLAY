@@ -8,7 +8,7 @@ canonical source URL.
 
 ## Release candidate
 
-1. Start from a reviewed, clean commit with `/usr/bin/zig` 0.16.x.
+1. Start from a reviewed, clean commit with Zig 0.17.x.
 2. Run `/usr/bin/zig build verify-all --summary all`. This includes the basic,
    renderer, consumer, and mock paragraph-provider examples.
    When a canonical remote exists, also run the read-only `verify-all` workflow

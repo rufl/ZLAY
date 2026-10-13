@@ -54,7 +54,7 @@ pub fn main(init: std.process.Init) !void {
     });
     try out.print("errors {d}", .{errors.length});
     for (errors.types[0..errors.length]) |error_type| {
-        try out.print(" {d}", .{@intFromEnum(error_type)});
+        try out.print(" {d}", .{@backingInt(error_type)});
     }
     try out.writeByte('\n');
     try out.flush();

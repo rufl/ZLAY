@@ -17,7 +17,7 @@ Do not include real secrets or personal data.
 ## Maintainer Checks
 
 - Run `gitleaks git --redact --no-banner` when available.
-- Run `zig build verify-all` with the supported Zig 0.16.x toolchain.
+- Run `zig build verify-all` with the supported Zig 0.17.x toolchain.
 - Review allocator failure, callback reentry, borrowed-pointer lifetime,
   command-union tagging, provider leases, integer bounds, and build scripts.
 - Keep CI actions pinned and permissions read-only unless a release task

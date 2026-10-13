@@ -284,8 +284,8 @@ fn runFrame(context: *zlay.Context, out: *std.Io.Writer, frame: usize) !void {
             frame,
             index,
             event.tag,
-            @intFromEnum(event.state),
-            @intFromEnum(event.properties),
+            @backingInt(event.state),
+            @backingInt(event.properties),
             contract.f32Bits(event.elapsed),
         });
         try printData(out, event.initial);

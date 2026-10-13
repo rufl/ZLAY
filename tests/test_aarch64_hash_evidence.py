@@ -128,7 +128,7 @@ class Aarch64HashEvidenceTests(unittest.TestCase):
             runner_preflight_path=self.runner_preflight,
             test_log_paths=self.test_logs,
             executable_paths=self.executables,
-            zig_version="0.16.0",
+            zig_version="0.17.0",
             optimize="Debug",
             target={
                 "selection": "native",
@@ -298,7 +298,7 @@ class Aarch64HashEvidenceTests(unittest.TestCase):
             runner_preflight_path=frozen_preflight,
             test_log_paths=self.test_logs,
             executable_paths=self.executables,
-            zig_version="0.16.0",
+            zig_version="0.17.0",
             optimize="Debug",
             target={
                 "selection": "native",
@@ -335,7 +335,7 @@ class Aarch64HashEvidenceTests(unittest.TestCase):
                 runner_preflight_path=self.runner_preflight,
                 test_log_paths=self.test_logs,
                 executable_paths=self.executables,
-                zig_version="0.16.0",
+                zig_version="0.17.0",
                 optimize="Debug",
                 target={
                     "selection": "native",
@@ -427,7 +427,7 @@ class Aarch64HashEvidenceTests(unittest.TestCase):
                 "c_oracle", "short"
             ),
             "zig-version": lambda item: item["execution"]["toolchain"].__setitem__(
-                "zig_version", "0.17.0"
+                "zig_version", "0.18.0"
             ),
             "optimize": lambda item: item["execution"]["toolchain"].__setitem__(
                 "optimize", "ReleaseSafe"

@@ -26,7 +26,7 @@ fn measureText(text: zlay.StringSlice, config: *zlay.TextElementConfig, _: ?*any
 
 fn printErrors(out: *std.Io.Writer, log: *const ErrorLog) !void {
     try out.print("errors {d}", .{log.length});
-    for (log.types[0..log.length]) |error_type| try out.print(" {d}", .{@intFromEnum(error_type)});
+    for (log.types[0..log.length]) |error_type| try out.print(" {d}", .{@backingInt(error_type)});
     try out.writeByte('\n');
 }
 
@@ -85,7 +85,7 @@ pub fn main(init: std.process.Init) !void {
             0;
         try out.print("command {d} type {d} id {d} text {d}\n", .{
             index,
-            @intFromEnum(command.command_type),
+            @backingInt(command.command_type),
             command.id,
             text_length,
         });

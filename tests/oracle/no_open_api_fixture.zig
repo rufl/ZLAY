@@ -45,7 +45,7 @@ fn probeNoOpen(out: *std.Io.Writer, context: *zlay.Context, label: []const u8) !
         },
     );
     for (errors.types[error_start..errors.length]) |error_type| {
-        try out.print(" {d}", .{@intFromEnum(error_type)});
+        try out.print(" {d}", .{@backingInt(error_type)});
     }
     try out.writeByte('\n');
 }
@@ -75,7 +75,7 @@ fn printRecovery(
     for (commands.items(), 0..) |command, index| {
         try out.print("recovery command {d} type {d} id {d} box {d} {d} {d} {d}\n", .{
             index,
-            @intFromEnum(command.command_type),
+            @backingInt(command.command_type),
             command.id,
             contract.f32Bits(command.bounding_box.x),
             contract.f32Bits(command.bounding_box.y),

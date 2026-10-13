@@ -40,7 +40,7 @@ fn printCommand(out: *std.Io.Writer, frame: usize, index: usize, command: zlay.R
     try out.print("frame {d} command {d} type {d} id {d} z {d} box {x:0>8} {x:0>8} {x:0>8} {x:0>8}", .{
         frame,
         index,
-        @intFromEnum(command.command_type),
+        @backingInt(command.command_type),
         command.id,
         command.z_index,
         contract.f32Bits(command.bounding_box.x),
