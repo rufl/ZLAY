@@ -2274,7 +2274,7 @@ fn addSiblingImports(
     }
     for (modules) |module| {
         for (sources, 0..) |source, index| {
-            module.addImport(source, modules[index]);
+            if (module != modules[index]) module.addImport(source, modules[index]);
         }
         if (module != root) module.addImport("zlay", root);
     }
