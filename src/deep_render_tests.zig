@@ -1,7 +1,7 @@
 //! Public regression coverage for stack-safe render traversal.
 
 const std = @import("std");
-const zlay = @import("root.zig");
+const zlay = @import("zlay");
 
 test "a fifty-thousand-element public layout renders without native stack recursion" {
     const depth: usize = 50_000;

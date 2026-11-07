@@ -62,6 +62,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    addSiblingImports(b, zlay, target, optimize);
 
     const module_tests = b.addTest(.{
         .root_module = zlay,
@@ -2240,4 +2241,41 @@ pub fn build(b: *std.Build) void {
     const verify_all_step = b.step("verify-all", "Run full Debug/ReleaseSafe verification plus ReleaseFast/ReleaseSmall C-free native/WebAssembly checks");
     verify_all_step.dependOn(&check_release_small.step);
     verify_all_step.dependOn(clay_coverage_certify_step);
+}
+
+fn addSiblingImports(
+    b: *std.Build,
+    root: *std.Build.Module,
+    target: std.Build.ResolvedTarget,
+    optimize: std.builtin.OptimizeMode,
+) void {
+    const sources = [_][]const u8{
+        "types.zig",                       "widgets.zig",                "retained_reference_tests.zig",
+        "retained_store.zig",              "root.zig",                   "scroll.zig",
+        "text.zig",                        "text_widgets.zig",           "transition.zig",
+        "retained_layout.zig",             "layout.zig",                 "paragraph_provider.zig",
+        "profile.zig",                     "public_metadata_tests.zig",  "renderer.zig",
+        "facade_tests.zig",                "geometry.zig",               "globals.zig",
+        "hash.zig",                        "integration_tests.zig",      "interaction.zig",
+        "context.zig",                     "debug.zig",                  "debug_inspector_tests.zig",
+        "declaration_order_tests.zig",     "deep_render_tests.zig",      "exit_transition_tests.zig",
+        "animation.zig",                   "audit_regression_tests.zig", "accessibility.zig",
+        "allocation_discipline_tests.zig",
+    };
+    var modules: [sources.len]*std.Build.Module = undefined;
+    modules[4] = root;
+    for (sources, 0..) |source, index| {
+        if (index == 4) continue;
+        modules[index] = b.createModule(.{
+            .root_source_file = b.path(b.fmt("src/{s}", .{source})),
+            .target = target,
+            .optimize = optimize,
+        });
+    }
+    for (modules) |module| {
+        for (sources, 0..) |source, index| {
+            module.addImport(source, modules[index]);
+        }
+        if (module != root) module.addImport("zlay", root);
+    }
 }

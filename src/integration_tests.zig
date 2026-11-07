@@ -1,7 +1,7 @@
 //! End-to-end tests through ZLAY's public `Context` and data types.
 
 const std = @import("std");
-const zlay = @import("root.zig");
+const zlay = @import("zlay");
 const types = zlay.types;
 
 fn fixedBox(width: f32, height: f32, color: types.Color) types.ElementDeclaration {

@@ -1,5 +1,5 @@
 const std = @import("std");
-const zlay = @import("root.zig");
+const zlay = @import("zlay");
 
 fn measureText(
     text: zlay.StringSlice,

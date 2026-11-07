@@ -1,7 +1,7 @@
 //! Regression coverage for public array metadata and error-string lifetime.
 
 const std = @import("std");
-const zlay = @import("root.zig");
+const zlay = @import("zlay");
 
 const ErrorCapture = struct {
     count: usize = 0,

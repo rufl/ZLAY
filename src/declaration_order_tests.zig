@@ -1,7 +1,7 @@
 //! Regression coverage for Clay-style split element declaration ordering.
 
 const std = @import("std");
-const zlay = @import("root.zig");
+const zlay = @import("zlay");
 
 const red = zlay.Color{ .r = 255, .a = 255 };
 const green = zlay.Color{ .g = 255, .a = 255 };

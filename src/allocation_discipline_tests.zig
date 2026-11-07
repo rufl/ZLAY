@@ -1,7 +1,7 @@
 //! Allocation and fixed-capacity regressions for the native Context.
 
 const std = @import("std");
-const zlay = @import("root.zig");
+const zlay = @import("zlay");
 const types = zlay.types;
 
 const red = types.Color{ .r = 255, .a = 255 };
