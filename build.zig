@@ -2278,10 +2278,10 @@ fn addSiblingImports(
             .optimize = optimize,
         });
     }
-    for (modules, 0..) |module, module_index| {
+    for (modules) |module| {
         for (sources, 0..) |source, index| {
-            if (module != modules[index]) module.addImport(source, modules[index]);
-            if (module_index != 4) tests_root.addImport(source, modules[index]);
+            if (index != 4 and module != modules[index]) module.addImport(source, modules[index]);
+            if (index != 4) tests_root.addImport(source, modules[index]);
         }
         if (module != root) module.addImport("zlay", root);
     }

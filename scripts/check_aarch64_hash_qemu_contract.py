@@ -63,6 +63,7 @@ SOURCE_CONTRACT_FILES = (
     "src/retained_store.zig",
     "src/root.zig",
     "src/scroll.zig",
+    "src/tests.zig",
     "src/text.zig",
     "src/text_widgets.zig",
     "src/transition.zig",
