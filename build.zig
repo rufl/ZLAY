@@ -62,10 +62,15 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    addSiblingImports(b, zlay, target, optimize);
+    const tests_root = b.createModule(.{
+        .root_source_file = b.path("src/tests.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    addSiblingImports(b, zlay, tests_root, target, optimize);
 
     const module_tests = b.addTest(.{
-        .root_module = zlay,
+        .root_module = tests_root,
     });
     const run_tests = b.addRunArtifact(module_tests);
 
@@ -2246,6 +2251,7 @@ pub fn build(b: *std.Build) void {
 fn addSiblingImports(
     b: *std.Build,
     root: *std.Build.Module,
+    tests_root: *std.Build.Module,
     target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
 ) void {
@@ -2272,10 +2278,12 @@ fn addSiblingImports(
             .optimize = optimize,
         });
     }
-    for (modules) |module| {
+    for (modules, 0..) |module, module_index| {
         for (sources, 0..) |source, index| {
             if (module != modules[index]) module.addImport(source, modules[index]);
+            if (module_index != 4) tests_root.addImport(source, modules[index]);
         }
         if (module != root) module.addImport("zlay", root);
     }
+    tests_root.addImport("zlay", root);
 }
